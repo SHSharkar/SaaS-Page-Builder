@@ -2,11 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-/**
- * A jackpot that visibly ticks. It starts from the authored value and grows
- * slowly so the section feels alive without pretending to read a real pool —
- * the seeded state is the source of truth on every load.
- */
 export function LiveJackpot({
   start,
   currency = "$",

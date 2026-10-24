@@ -69,7 +69,6 @@ export function SiteSettings({
   return (
     <div className="space-y-5">
       <Notice state={state} />
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Identity</h2>
@@ -92,7 +91,6 @@ export function SiteSettings({
           </div>
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Brand and theme</h2>
@@ -141,7 +139,6 @@ export function SiteSettings({
               ))}
             </select>
           </div>
-
           <div>
             <label className="label" htmlFor="theme-body-font">
               Body font
@@ -159,7 +156,6 @@ export function SiteSettings({
               ))}
             </select>
           </div>
-
           <div>
             <label className="label" htmlFor="theme-radius">
               Corner radius
@@ -177,7 +173,6 @@ export function SiteSettings({
               <option value="round">Round</option>
             </select>
           </div>
-
           <div>
             <label className="label" htmlFor="theme-logo-text">
               Wordmark
@@ -189,7 +184,6 @@ export function SiteSettings({
               onChange={(event) => setDraft((current) => ({ ...current, logoText: event.target.value }))}
             />
           </div>
-
           <div>
             <label className="label" htmlFor="theme-tagline">
               Tagline
@@ -201,7 +195,6 @@ export function SiteSettings({
               onChange={(event) => setDraft((current) => ({ ...current, tagline: event.target.value }))}
             />
           </div>
-
           <div>
             <label className="label" htmlFor="theme-logo-media">
               Logo image
@@ -221,7 +214,6 @@ export function SiteSettings({
             </select>
           </div>
         </div>
-
         <div className="flex flex-wrap items-center gap-3 border-t border-line px-5 py-4">
           <button
             type="button"
@@ -245,7 +237,6 @@ export function SiteSettings({
           </div>
         </div>
       </section>
-
       {canManage ? (
         <section className="panel">
           <div className="border-b border-line px-5 py-4">

@@ -37,7 +37,6 @@ export default async function DashboardPage({
           </>
         }
       />
-
       {denied ? (
         <p className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-900">
           That screen needs the <strong>{denied}</strong> permission, which your roles do not include. An admin can
@@ -51,7 +50,6 @@ export default async function DashboardPage({
         <Stat label="Snapshots kept" value={overview.versions} hint="Rollback ready, 50 per page" />
         <Stat label="Media assets" value={overview.media} hint="Deduplicated by content hash" />
       </div>
-
       {(overview.importsInReview > 0 || overview.pendingDomains > 0 || overview.pendingInvites > 0) && (
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           {overview.importsInReview > 0 ? (
@@ -125,7 +123,6 @@ export default async function DashboardPage({
             ) : null}
           </div>
         </Panel>
-
         <div className="space-y-5">
           <Panel title="Recently shipped" description="The last eight audited actions.">
             <ol className="space-y-3">
@@ -143,7 +140,6 @@ export default async function DashboardPage({
               {activity.length === 0 ? <li className="text-sm text-slate-500">Nothing yet.</li> : null}
             </ol>
           </Panel>
-
           <Panel title="Component library" description="One definition drives the editor, importer and renderer.">
             <div className="flex items-end justify-between">
               <div>

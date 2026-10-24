@@ -59,7 +59,6 @@ export function DomainsPanel({
   return (
     <div className="space-y-5">
       <Notice state={state} />
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Connect a custom domain</h2>
@@ -97,7 +96,6 @@ export function DomainsPanel({
           </button>
         </div>
       </section>
-
       <section className="panel overflow-hidden">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Hostnames</h2>
@@ -172,7 +170,6 @@ export function DomainsPanel({
                   ) : null}
                 </div>
               </div>
-
               {domain.kind === "custom" && domain.status !== "active" ? (
                 <div className="mt-3 rounded-lg border border-line bg-paper/70 px-3.5 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">DNS record to add</p>

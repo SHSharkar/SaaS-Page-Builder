@@ -4,11 +4,6 @@ import { ResetPasswordForm } from "@/components/auth/reset-password-form";
 export const metadata = { title: "Reset your password" };
 export const dynamic = "force-dynamic";
 
-/**
- * A reset link is a single-use row in `verification`. The page does not check it
- * because that would consume it; the action consumes it on submit and fails
- * cleanly if it is stale or already used.
- */
 export default async function ResetPasswordPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
 

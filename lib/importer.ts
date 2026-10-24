@@ -120,11 +120,6 @@ type Classification = {
   reason: string;
 };
 
-/**
- * Deterministic signature pass (phase 2 research, step 4). It may only emit
- * aliases that exist in the registry; anything it cannot classify goes to the
- * unmapped list for a human.
- */
 function classify($: Loaded, el: cheerio.Cheerio<Element>, index: number, isLast: boolean): Classification | null {
   const shape = shapeOf($, el);
   const text = clean(el.text());
@@ -444,7 +439,7 @@ function topLevelSections($: Loaded): cheerio.Cheerio<Element>[] {
 export function analyzeHtml(html: string): ImportMapping {
   const $ = cheerio.load(html);
   $("script, style, noscript, template").remove();
-  // Site chrome is global content, not page content.
+
   $("header, nav, footer").each((_, node) => {
     $(node).remove();
   });
@@ -505,8 +500,6 @@ export function analyzeHtml(html: string): ImportMapping {
   };
 }
 
-/* --------------------------- asset copying (SSRF rules) --------------------------- */
-
 const PRIVATE_RANGES = [
   /^127\./,
   /^10\./,
@@ -558,8 +551,6 @@ async function fetchImage(url: string): Promise<Buffer | null> {
   }
 }
 
-/* ------------------------------- job lifecycle ------------------------------- */
-
 export async function createImportJob(options: {
   siteId: string;
   filename: string;
@@ -585,9 +576,6 @@ export async function createImportJob(options: {
   const html = options.bytes.toString("utf8");
   const mapping = analyzeHtml(html);
 
-  // uploaded → parsing → mapped → in_review, one step at a time, so a crashed
-  // analysis leaves the job visibly stuck in `parsing` rather than pretending
-  // it produced a mapping.
   const [queued] = await db
     .insert(importJobs)
     .values({

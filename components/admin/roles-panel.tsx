@@ -94,7 +94,6 @@ export function RolesPanel({
             ))}
           </ul>
         </div>
-
         {canManage ? (
           <button
             type="button"
@@ -113,10 +112,8 @@ export function RolesPanel({
           narrowed. Editor and Viewer are seeded once and are editable afterwards.
         </div>
       </aside>
-
       <section className="min-w-0 space-y-4">
         <Notice state={state} />
-
         {creating && canManage ? (
           <CreateRoleForm
             groups={groups}
@@ -226,7 +223,6 @@ function RoleEditor({
           rank {role.rank}
         </span>
       </header>
-
       <div className="space-y-4 p-5">
         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_120px]">
           <div>
@@ -269,7 +265,6 @@ function RoleEditor({
             />
           </div>
         </div>
-
         <div className="space-y-3">
           {groups.map((group) => {
             const rows = permissions.filter((permission) => permission.group === group.key);
@@ -331,7 +326,6 @@ function RoleEditor({
             );
           })}
         </div>
-
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
           <button
             type="button"

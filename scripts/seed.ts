@@ -1,8 +1,4 @@
-/**
- * Seeds the demo content (idempotent — an existing database is left alone).
- * The demo is deliberately realistic: one active site, three published pages,
- * a second snapshot for rollback, three curated templates and a pending invite.
- */
+
 import { ensureDb } from "@/lib/db";
 import { seedIfEmpty } from "@/lib/seed";
 import { DEMO_PASSWORD } from "@/lib/demo-accounts";

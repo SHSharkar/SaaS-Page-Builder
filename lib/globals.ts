@@ -31,7 +31,6 @@ export async function listSiteContents(siteId: string): Promise<SiteContent[]> {
   return db.select().from(siteContents).where(eq(siteContents.siteId, siteId));
 }
 
-/** Default SEO lives in the `defaults` document's root props, not in blocks. */
 export async function getDefaultSeo(siteId: string): Promise<Partial<PageSeo>> {
   const content = await getSiteContent(siteId, "defaults");
   const document = content?.draftDocument ?? content?.publishedDocument;
@@ -119,7 +118,6 @@ export async function publishGlobals(siteId: string, kind: GlobalKind, actor: Ac
     })
     .where(eq(siteContents.id, row.id));
 
-  // Site-wide content changes every page of the site: clear both keys now.
   invalidateGlobals(siteId);
 
   await recordAudit({

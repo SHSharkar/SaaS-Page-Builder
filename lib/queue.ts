@@ -40,11 +40,9 @@ export async function enqueue(
     .onConflictDoNothing();
 }
 
-/** Jobs act as the last active admin, recorded as such in the audit trail. */
 export async function getSystemActor(): Promise<Actor | null> {
   await ensureDb();
-  // The actor is "whoever still holds an admin-rank role", not a hard-coded
-  // address, and the session is synthetic: a job has no cookie to act through.
+
   const [row] = await db
     .select({ user: users })
     .from(users)
@@ -112,7 +110,7 @@ async function handle(jobKind: string, payload: Record<string, unknown>): Promis
       break;
     }
     case "media.orphan-sweep": {
-      // Marked rows whose files never landed; the media module owns the detail.
+
       break;
     }
     case "domain.verify": {
@@ -137,8 +135,7 @@ async function handle(jobKind: string, payload: Record<string, unknown>): Promis
       const { purgeSite, getSiteRow } = await import("@/lib/sites");
       const siteId = String(payload.siteId);
       const site = await getSiteRow(siteId);
-      // Only a site whose restore window has closed is purged; a restored site
-      // makes the queued job a no-op.
+
       if (!site) break;
       if (site.status !== "deleted") break;
       await purgeSite(siteId);
@@ -149,7 +146,6 @@ async function handle(jobKind: string, payload: Record<string, unknown>): Promis
   }
 }
 
-/** At-least-once delivery: every handler must converge when repeated. */
 export async function runDueJobs(limit = 10): Promise<{ processed: number; failed: number }> {
   await ensureDb();
   const due = await db
@@ -198,10 +194,6 @@ export async function runDueJobs(limit = 10): Promise<{ processed: number; faile
   return { processed, failed };
 }
 
-/**
- * Schedules the recurring sweeps. A missed run is skipped rather than
- * replayed: the next run covers the work (PRD 3.3).
- */
 export async function scheduleRecurring(): Promise<void> {
   await ensureDb();
   const now = Date.now();

@@ -34,7 +34,6 @@ export default async function ComponentsPage({
         description={`${REGISTRY_STATS.launch} launch components plus ${REGISTRY_STATS.waveTwo} in the second wave, across ${REGISTRY_STATS.groups} groups. One definition per component feeds the editor, the importer, the generator prompt and the server validator.`}
         actions={<span className="badge badge-gray">{REGISTRY_STATS.total} defined</span>}
       />
-
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <form className="flex flex-1 items-center gap-2" action="/admin/components">
           <input name="q" defaultValue={q} placeholder="Search by name, alias or intent…" className="input max-w-sm" />
@@ -70,7 +69,6 @@ export default async function ComponentsPage({
           ))}
         </div>
       </div>
-
       {[...byGroup.entries()].map(([groupKey, groupBlocks]) => {
         const meta = GROUPS.find((entry) => entry.key === groupKey);
         return (

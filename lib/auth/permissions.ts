@@ -1,13 +1,4 @@
-/**
- * The permission catalogue.
- *
- * Code owns what a permission *is* (key, label, grouping); the database owns
- * who has it. Roles live in `role` / `role_permission`, assignments in
- * `user_role`, and every guard reads them through `requirePermission`. Nothing
- * in the product compares a role name to a string any more, so a staff admin
- * can build a new role in `/admin/roles` and hand out exactly the capabilities
- * it needs without a deploy.
- */
+
 export type PermissionGroup = "content" | "sites" | "assets" | "access" | "platform";
 
 export type PermissionDef = {
@@ -15,7 +6,7 @@ export type PermissionDef = {
   group: PermissionGroup;
   label: string;
   description: string;
-  /** Shown with a warning colour in the matrix: it can destroy or expose data. */
+
   dangerous?: boolean;
 };
 
@@ -84,7 +75,7 @@ export type SystemRoleDef = {
   name: string;
   description: string;
   rank: number;
-  /** "*" means every permission in the catalogue, including ones added later. */
+
   permissions: "*" | string[];
 };
 
@@ -154,7 +145,6 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
 
 export const SYSTEM_ROLE_KEYS = SYSTEM_ROLES.map((role) => role.key);
 
-/** Permissions implied by a role definition, resolved against the catalogue. */
 export function permissionsForRole(role: { permissions: "*" | string[] }): string[] {
   return role.permissions === "*" ? PERMISSION_KEYS : role.permissions.filter((key) => PERMISSION_MAP.has(key));
 }

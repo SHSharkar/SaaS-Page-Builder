@@ -32,7 +32,6 @@ export type LoadedPage =
     }
   | { kind: "not_found"; reason: string };
 
-/** One loader for public and preview, so both render through the same tree. */
 export const loadPublicPage = cache(async (host: string, rawPath: string): Promise<LoadedPage> => {
   const resolution = await resolveHost(host);
   if (!resolution) return { kind: "not_found", reason: "unknown-host" };
@@ -81,7 +80,6 @@ export const loadPublicPage = cache(async (host: string, rawPath: string): Promi
   };
 });
 
-/** Staff preview serves drafts too, marked noindex, on any status. */
 export const loadPreviewPage = cache(async (siteId: string, rawPath: string) => {
   const site = await getSite(siteId);
   if (!site) return { kind: "not_found" as const, reason: "no-site" };

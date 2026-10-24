@@ -16,7 +16,6 @@ export default async function NewSitePage() {
         description="A site owns one brand: theme, global navigation and footer, pages, media and hostnames. You can start from a template or from an empty canvas."
         breadcrumb={[{ label: "Sites", href: "/admin/sites" }, { label: "New" }]}
       />
-
       <form action={createSiteAction} className="space-y-5">
         <Panel title="Basics" description="The platform address is generated from the slug.">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -28,7 +27,6 @@ export default async function NewSitePage() {
             </Field>
           </div>
         </Panel>
-
         <Panel
           title="Brand accent"
           description="Used for buttons, links and highlights. You can refine the full palette later in Settings."
@@ -43,7 +41,6 @@ export default async function NewSitePage() {
             />
           </Field>
         </Panel>
-
         <div className="flex items-center gap-2">
           <button type="submit" className="btn-admin btn-admin-primary">
             Create site

@@ -5,11 +5,6 @@ import { beginUpload, MAX_IMAGE_BYTES } from "@/lib/media";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Step one of the two-step upload: create a `pending` row and hand back a
- * presigned PUT when the bucket is configured. The row is invisible to the
- * library and to the renderer until `…/<mediaId>/confirm` verifies the bytes.
- */
 export async function POST(request: Request, { params }: { params: Promise<{ siteId: string }> }) {
   const actor = await getActor();
   if (!actor) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
@@ -37,7 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ sit
     });
     return NextResponse.json({
       ...upload,
-      /** Null means storage is local: post the bytes to the upload route instead. */
+
       direct: upload.uploadUrl !== null,
       maxBytes: MAX_IMAGE_BYTES,
     });

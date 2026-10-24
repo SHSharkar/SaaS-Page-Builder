@@ -1,9 +1,4 @@
-/**
- * A typed refusal. The state machines in `lib/lifecycle.ts` raise this when a
- * move is not on the map, so a caller can tell "you asked for something this
- * record cannot do" from "the write failed". The message is safe to show to
- * staff; the code is stable enough for a client to branch on.
- */
+
 export type LifecycleKind = "page" | "domain" | "import" | "media" | "invite" | "site" | "template" | "session";
 
 export class LifecycleError extends Error {

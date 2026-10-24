@@ -43,8 +43,6 @@ body {
   font-family: var(--font-sans);
 }
 
-/* ---------------------------- public page scope ---------------------------- */
-
 .site-scope {
   background: var(--site-bg);
   color: var(--site-text);
@@ -208,8 +206,6 @@ body {
   color: var(--site-text);
 }
 
-/* -------------------------------- admin shell ------------------------------- */
-
 .admin-body {
   background: var(--color-paper);
   color: #101828;
@@ -348,7 +344,6 @@ body {
   color: #b42318;
 }
 
-/* Puck canvas: keep our site variables available inside the editor. */
 [data-puck-canvas] {
   background: var(--site-bg);
 }

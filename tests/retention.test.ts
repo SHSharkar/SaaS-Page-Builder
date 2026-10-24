@@ -34,7 +34,7 @@ describe("site deletion is two-staged", () => {
 
     const deleted = await listDeletedSites();
     expect(deleted.map((row) => row.site.id)).toContain(site.id);
-    // The pages are still there: this is a soft delete.
+
     expect(await db.select().from(pages).where(eq(pages.siteId, site.id))).toHaveLength(1);
   });
 
@@ -103,7 +103,7 @@ describe("the daily sweeper", () => {
     expect(second.pendingMediaRemoved).toBe(0);
     expect(second.sitesPurged).toBe(0);
     expect(second.domainsForgotten).toBe(0);
-    // Only the audit log grows, because every pass records that it ran.
+
     expect(first.ranAt).not.toBe(second.ranAt);
   });
 
@@ -111,7 +111,7 @@ describe("the daily sweeper", () => {
     const site = await createSite({ name: "Snapshots", slug: `snapshots-${Date.now()}`, createdBy: actor.user.id });
     const page = await createPage({ siteId: site.id, title: "Many", slug: "many", actor });
     let lock = page.lockVersion;
-    // Under the 30-per-hour publish throttle on purpose; the cap itself is exercised below.
+
     for (let index = 0; index < 12; index += 1) {
       lock = (await saveDraft(site.id, page.id, doc(`Version ${index}`), lock, actor)).lockVersion;
       await publishPage(site.id, page.id, actor);
@@ -121,11 +121,10 @@ describe("the daily sweeper", () => {
     expect(await pruneVersions(page.id, 5)).toBe(7);
     const remaining = await listVersions(page.id);
     expect(remaining.length).toBe(5);
-    // Newest first: the live pointer is still present.
+
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(remaining.map((version) => version.id)).toContain(row.currentPublishedVersionId);
 
-    // The sweeper leaves a page under the default cap untouched.
     const result = await runDailyCleanup(actor);
     expect(result.versionsPruned).toBe(0);
     expect((await listVersions(page.id)).length).toBe(5);

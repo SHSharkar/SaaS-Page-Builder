@@ -23,12 +23,10 @@ export default async function SiteImportsPage({ params }: { params: Promise<{ si
         description="Bring in an existing landing page as HTML. The analyser proposes a component mapping; a reviewer must approve every section before a draft exists."
         breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Imports" }]}
       />
-
       <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
         <Panel title="New import" description="Five megabyte cap, one file at a time, twenty per staff member per day.">
           <ImportUpload siteId={siteId} />
         </Panel>
-
         <div className="space-y-4">
           {reviewable.length ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">

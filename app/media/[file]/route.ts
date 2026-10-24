@@ -3,11 +3,6 @@ import { db, ensureDb } from "@/lib/db";
 import { mediaAssets } from "@/lib/db/schema";
 import { getObject, storageBackend } from "@/lib/media/storage";
 
-/**
- * Media is addressed by content hash, so a URL is immutable: the same file
- * always has the same name. In R2 mode the bucket serves these URLs directly
- * and this route is only a fallback for rows that predate the bucket.
- */
 export async function GET(_request: Request, { params }: { params: Promise<{ file: string }> }) {
   const { file } = await params;
   if (!/^[a-zA-Z0-9._-]+$/.test(file)) {

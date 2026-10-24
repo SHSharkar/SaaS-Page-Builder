@@ -17,8 +17,7 @@ export default async function PlatformSettingsPage() {
   await ensureDb();
   const rows = await db.select().from(platformSettings).orderBy(desc(platformSettings.key));
   const jobs = await listRecentJobs(12);
-  // "Active admins" means anyone still holding an admin-rank role, however the
-  // roles were renamed or extended.
+
   const admins = await countActiveStaffAtRank(100);
   const preview = await cleanupPreview();
   const storage = storageInfo();
@@ -35,7 +34,6 @@ export default async function PlatformSettingsPage() {
           </span>
         }
       />
-
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <PlatformSettings
           preview={preview}
@@ -56,7 +54,6 @@ export default async function PlatformSettingsPage() {
             updatedAt: row.updatedAt.toISOString(),
           }))}
         />
-
         <div className="space-y-5">
           <Panel title="Environment" description="What this instance is actually running on.">
             <dl className="space-y-1.5 text-[12px]">
@@ -75,7 +72,6 @@ export default async function PlatformSettingsPage() {
               ))}
             </dl>
           </Panel>
-
           <Panel title="Recent jobs" description="The queue lives in the database with a unique dedupe key.">
             <ul className="space-y-2">
               {jobs.map((job) => (

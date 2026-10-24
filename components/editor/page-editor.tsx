@@ -160,7 +160,6 @@ export function PageEditor(props: Props) {
             {props.scope === "page" ? `/${props.slug}` : `site ${props.scope}`}
           </p>
         </div>
-
         <span
           className={`badge ${
             statusLabel === "Published" ? "badge-green" : statusLabel === "Archived" ? "badge-gray" : "badge-amber"
@@ -169,7 +168,6 @@ export function PageEditor(props: Props) {
           {statusLabel}
         </span>
         {dirty ? <span className="badge badge-blue">Unsaved changes</span> : null}
-
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {notice ? (
             <span
@@ -216,7 +214,6 @@ export function PageEditor(props: Props) {
           ) : null}
         </div>
       </header>
-
       <div className="min-h-0 flex-1">
         <Puck
           config={config}

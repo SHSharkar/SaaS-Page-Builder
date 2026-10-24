@@ -50,7 +50,6 @@ export default async function PageSettingsPage({
           </>
         }
       />
-
       <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
         <PageSettings
           siteId={siteId}
@@ -63,7 +62,6 @@ export default async function PageSettingsPage({
           scheduledPublishAt={page.scheduledPublishAt ? page.scheduledPublishAt.toISOString() : null}
           scheduledUnpublishAt={page.scheduledUnpublishAt ? page.scheduledUnpublishAt.toISOString() : null}
         />
-
         <div className="space-y-5">
           <Panel title="Version history" description="Snapshots are immutable. Rollback republishes an old one as a new version.">
             <ol className="space-y-2">
@@ -100,7 +98,6 @@ export default async function PageSettingsPage({
               ) : null}
             </ol>
           </Panel>
-
           <Panel title="Concurrency" description="Every save carries the expected counter, so two editors cannot silently overwrite each other.">
             <dl className="space-y-2 text-[13px]">
               <div className="flex justify-between gap-3">

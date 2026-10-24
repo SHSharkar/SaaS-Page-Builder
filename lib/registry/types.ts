@@ -25,11 +25,11 @@ export type FieldDef = {
   placeholder?: string;
   help?: string;
   options?: FieldOption[];
-  /** repeater sub-fields */
+
   fields?: FieldDef[];
-  /** repeater defaults for a newly added row */
+
   defaultItem?: Record<string, unknown>;
-  /** human summary for a repeater row */
+
   itemLabel?: (item: Record<string, unknown>, index: number) => string;
   min?: number;
   max?: number;
@@ -124,22 +124,16 @@ export type BlockDefinition<Props extends Record<string, unknown> = Record<strin
   name: string;
   group: ComponentGroup;
   description: string;
-  /** Shown in the library list under the name. */
+
   summary?: string;
   fields: FieldDef[];
   defaults: Props;
   schema: z.ZodType<Props>;
   render: (props: Props & { appearance: Appearance }) => ReactNode;
   deprecated?: boolean;
-  /** 1 = launch catalogue, 2 = the second wave shipped with the same registry. */
+
   wave?: 1 | 2;
 };
-
-/* ------------------------------------------------------------------ *
- * One field vocabulary -> one schema. The editor, the importer, the
- * generator and the server validator all read this, so a field cannot
- * mean two things (founding principle: the server is the source of truth).
- * ------------------------------------------------------------------ */
 
 const IMAGE_SCHEMA = z
   .object({ id: z.string(), url: z.string().optional(), alt: z.string().optional() })

@@ -22,7 +22,6 @@ export default async function SiteDomainsPage({ params }: { params: Promise<{ si
         description="Hostname resolution and certificates. A hostname never receives a certificate before its DNS record verifies."
         breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Domains" }]}
       />
-
       <DomainsPanel
         siteId={siteId}
         platformHost={platformHost(site.slug)}
@@ -43,7 +42,6 @@ export default async function SiteDomainsPage({ params }: { params: Promise<{ si
           };
         })}
       />
-
       <Panel className="mt-5" title="Certificate flow" description="Verification, then issuance — the order matters.">
         <ol className="space-y-1.5 text-[13px] text-slate-600">
           <li>1. Add the hostname; a single-use TXT token is generated.</li>

@@ -17,7 +17,7 @@ export type ConfigOptions = {
   theme: SiteTheme;
   media: ResolvedMedia[];
   onUploaded: (asset: ResolvedMedia) => void;
-  /** Site-frame components are edited as global content, not inside a page. */
+
   scope: "page" | "site-frame";
 };
 

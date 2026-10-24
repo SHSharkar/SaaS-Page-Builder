@@ -1,8 +1,3 @@
-/**
- * The stored document shapes (PRD 3.4). Every document carries a
- * schema version as its first field; media references are identifiers,
- * never URLs (ADR-004).
- */
 
 export const DOCUMENT_SCHEMA_VERSION = 1;
 
@@ -171,7 +166,6 @@ export type ImportReview = {
   reviewedAt: string;
 };
 
-/** Hostnames are stored lowercase, without scheme or port (PRD 3.1). */
 export function normalizeHostname(raw: string): string {
   return raw
     .trim()
@@ -202,15 +196,10 @@ export function slugify(raw: string): string {
     .slice(0, 80);
 }
 
-/** Paths are stored without a leading slash; "" is the homepage path. */
 export function normalizePath(raw: string): string {
   return raw.replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
 }
 
-/**
- * Page addresses may be nested ("rewards/wallet"). Every segment is slugified
- * individually so a slash survives while spaces and capitals do not.
- */
 export function normalizeSlugPath(raw: string): string {
   return normalizePath(
     raw
@@ -228,7 +217,7 @@ export function extractMediaIds(value: unknown, acc = new Set<string>()): Set<st
   }
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    // A media reference is an object with an `id` and no `type` (blocks have a type).
+
     if (typeof record.id === "string" && !("type" in record)) acc.add(record.id);
     for (const item of Object.values(record)) extractMediaIds(item, acc);
   }

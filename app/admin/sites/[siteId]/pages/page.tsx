@@ -47,7 +47,6 @@ export default async function SitePagesPage({
         }
         breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Pages" }]}
       />
-
       <div className="mb-4 flex flex-wrap gap-1.5">
         {FILTERS.map((filter) => (
           <Link
@@ -70,7 +69,6 @@ export default async function SitePagesPage({
           </Link>
         ))}
       </div>
-
       {rows.length === 0 ? (
         <EmptyState
           title="No pages yet"

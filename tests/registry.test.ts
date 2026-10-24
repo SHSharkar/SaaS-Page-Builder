@@ -12,12 +12,6 @@ import {
 import { APPEARANCE_FIELDS, DEFAULT_APPEARANCE as APPEARANCE_DEFAULTS } from "@/lib/registry/types";
 import { newPageDocument } from "@/lib/pages";
 
-/**
- * The catalog is self-capable: every block declares its own fields, defaults,
- * style controls and preview, and the same definition feeds the editor, the
- * importer and the renderer. These checks fail loudly if a block is added
- * without those pieces.
- */
 describe("catalog shape", () => {
   it("ships 27 launch blocks plus 8 in the second wave", () => {
     expect(REGISTRY_STATS.launch).toBe(27);

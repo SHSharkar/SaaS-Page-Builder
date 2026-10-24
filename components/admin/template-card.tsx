@@ -53,7 +53,6 @@ export function TemplateCard({
           {template.category}
         </span>
       </div>
-
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-ink-900">{template.name}</h3>
@@ -64,7 +63,6 @@ export function TemplateCard({
         <p className="text-[11px] text-slate-400">
           {template.sections} sections · {template.placeholders.length} placeholders · updated {template.updatedAt}
         </p>
-
         {open ? (
           <div className="mt-1 space-y-2.5 rounded-lg border border-line bg-paper/60 p-3">
             {sites.length === 0 ? (

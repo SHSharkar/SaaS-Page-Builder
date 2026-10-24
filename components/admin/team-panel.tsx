@@ -114,7 +114,6 @@ export function TeamPanel({
           ))}
         </div>
       </section>
-
       {canManage ? (
         <section className="grid gap-5 lg:grid-cols-2">
           <div className="card p-5">
@@ -171,7 +170,6 @@ export function TeamPanel({
               </button>
             </form>
           </div>
-
           <div className="card p-5">
             <h2 className="text-sm font-semibold text-ink-900">Create an account directly</h2>
             <p className="mt-1 text-[11px] text-slate-500">
@@ -373,7 +371,6 @@ function MemberRow({
             )}
           </div>
         </div>
-
         {canManage ? (
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -432,7 +429,6 @@ function MemberRow({
           </div>
         ) : null}
       </div>
-
       {editing && canManage ? (
         <form
           className="mt-3 rounded-lg border border-line bg-paper/60 p-3"

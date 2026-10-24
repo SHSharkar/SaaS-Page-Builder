@@ -16,8 +16,6 @@ const mediaSchema = z
   .nullable()
   .catch(null);
 
-/* --------------------------- announcement bar --------------------------- */
-
 export const announcementBar: BlockDefinition<{
   message: string;
   link: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
@@ -72,8 +70,6 @@ export const announcementBar: BlockDefinition<{
     );
   },
 };
-
-/* -------------------------------- game grid ------------------------------- */
 
 export const gameGrid: BlockDefinition<{
   eyebrow: string;
@@ -180,8 +176,6 @@ export const gameGrid: BlockDefinition<{
   },
 };
 
-/* ------------------------------ testimonial ------------------------------ */
-
 export const testimonialQuote: BlockDefinition<{
   quote: string;
   author: string;
@@ -246,8 +240,6 @@ export const testimonialQuote: BlockDefinition<{
   ),
 };
 
-/* ----------------------------- jackpot counter ---------------------------- */
-
 export const jackpotCounter: BlockDefinition<{
   label: string;
   amount: number;
@@ -298,8 +290,6 @@ export const jackpotCounter: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------ live winners ----------------------------- */
 
 export const liveWinners: BlockDefinition<{
   title: string;
@@ -377,8 +367,6 @@ export const liveWinners: BlockDefinition<{
     </Section>
   ),
 };
-
-/* -------------------------------- vip tiers ------------------------------ */
 
 export const vipTiers: BlockDefinition<{
   eyebrow: string;
@@ -480,8 +468,6 @@ export const vipTiers: BlockDefinition<{
   ),
 };
 
-/* ---------------------------- responsible gaming -------------------------- */
-
 export const responsibleGaming: BlockDefinition<{
   title: string;
   body: string;
@@ -551,8 +537,6 @@ export const responsibleGaming: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------ app download ----------------------------- */
 
 export const appDownload: BlockDefinition<{
   title: string;
@@ -628,8 +612,6 @@ export const appDownload: BlockDefinition<{
   ),
 };
 
-/* -------------------------------- team grid ------------------------------- */
-
 export const teamGrid: BlockDefinition<{
   eyebrow: string;
   title: string;
@@ -699,8 +681,6 @@ export const teamGrid: BlockDefinition<{
   ),
 };
 
-/* --------------------------------- timeline ------------------------------- */
-
 export const timeline: BlockDefinition<{
   eyebrow: string;
   title: string;
@@ -766,8 +746,6 @@ export const timeline: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------- image gallery ---------------------------- */
 
 export const imageGallery: BlockDefinition<{
   eyebrow: string;
@@ -846,8 +824,6 @@ export const imageGallery: BlockDefinition<{
     );
   },
 };
-
-/* ------------------------------ schedule table ---------------------------- */
 
 export const scheduleTable: BlockDefinition<{
   title: string;

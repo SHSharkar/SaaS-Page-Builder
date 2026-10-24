@@ -21,9 +21,8 @@ import { LifecycleError, NotFoundError } from "@/lib/errors";
 
 export const MAX_VERSIONS_PER_PAGE = 50;
 
-/** Used by the globals cache warmer; documents are validated where they are written. */
 export function primeGlobalDocuments(_documents: unknown): void {
-  /* no-op: the cache stores documents as written, validation happens on save */
+
 }
 
 export async function listPages(siteId: string) {
@@ -34,8 +33,6 @@ export async function listPages(siteId: string) {
     .where(and(eq(pages.siteId, siteId), isNull(pages.deletedAt)))
     .orderBy(desc(pages.isHomepage), asc(pages.title));
 
-  // Counted in its own statement: a correlated subquery written in a drizzle
-  // select list loses its table qualifier and silently counts zero rows.
   const counts = await db
     .select({ pageId: pageVersions.pageId, count: sql<number>`count(*)::int` })
     .from(pageVersions)
@@ -129,7 +126,6 @@ export async function createPage(input: CreatePageInput): Promise<Page> {
 
 export type SaveDraftResult = { lockVersion: number };
 
-/** Saves carry the optimistic counter; a stale save is refused (FR-007). */
 export async function saveDraft(
   siteId: string,
   pageId: string,
@@ -220,7 +216,6 @@ export async function updatePageMeta(
 
 export type PublishResult = { versionId: string; versionNumber: number };
 
-/** Publish: snapshot the draft, then clear the cache in the same request. */
 export async function publishPage(
   siteId: string,
   pageId: string,
@@ -241,7 +236,7 @@ export async function publishPage(
 
   const result = await db.transaction(async (tx) => {
     if (page.isHomepage) {
-      // One published homepage per site, enforced again by a partial index.
+
       await tx
         .update(pages)
         .set({ isHomepage: false })
@@ -298,12 +293,12 @@ export async function unpublishPage(siteId: string, pageId: string, actor: Actor
   await ensureDb();
   const page = await getPage(siteId, pageId);
   if (!page) throw new NotFoundError("Page");
-  // A draft was never live, so there is nothing to take down.
+
   if (page.status !== "published") {
     throw new LifecycleError("page", page.status, "draft", "Only a published page can be taken offline.");
   }
   await db.update(pages).set({ status: "draft", updatedAt: new Date() }).where(eq(pages.id, pageId));
-  // A takedown is never delayed by a cache: clear now, in this request.
+
   invalidatePageCache(siteId);
   await recordAudit({
     action: "page_unpublished",
@@ -335,7 +330,6 @@ export async function archivePage(siteId: string, pageId: string, actor: Actor):
   });
 }
 
-/** Archived → draft. A restored page comes back as a draft: it must be published again. */
 export async function restorePage(siteId: string, pageId: string, actor: Actor): Promise<void> {
   await ensureDb();
   const page = await getPage(siteId, pageId);
@@ -363,7 +357,6 @@ export async function listVersions(pageId: string): Promise<PageVersion[]> {
     .limit(MAX_VERSIONS_PER_PAGE);
 }
 
-/** Rollback republishes an old snapshot as a brand-new snapshot; history never rewrites. */
 export async function rollbackToVersion(
   siteId: string,
   pageId: string,
@@ -454,8 +447,6 @@ export async function schedulePublish(
     )
     .where(eq(pages.id, pageId));
 
-  // The queue owns the clock: one queued job per page and operation, replaced
-  // whenever the schedule changes and cancelled when it is cleared.
   const { jobs } = await import("@/lib/db/schema");
   const { enqueue } = await import("@/lib/queue");
   const dedupeKey = `page.schedule:${pageId}:${operator}`;
@@ -480,7 +471,6 @@ export async function schedulePublish(
   });
 }
 
-/** Reads the published snapshot for the public renderer. */
 export async function getPublishedDocument(
   siteId: string,
   page: Page,

@@ -55,7 +55,6 @@ export function ImportUpload({ siteId }: { siteId: string }) {
           />
         </div>
       </div>
-
       <div>
         <label className="label" htmlFor="import-html">
           …or paste the markup
@@ -69,7 +68,6 @@ export function ImportUpload({ siteId }: { siteId: string }) {
           placeholder="<section>…</section>"
         />
       </div>
-
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -89,7 +87,6 @@ export function ImportUpload({ siteId }: { siteId: string }) {
           Nothing is created yet — the analysis produces a proposal a human must approve.
         </p>
       </div>
-
       <Notice state={state} />
     </div>
   );

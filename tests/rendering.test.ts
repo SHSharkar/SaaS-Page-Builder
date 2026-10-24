@@ -68,7 +68,7 @@ describe("hostname resolution", () => {
   });
 
   it("falls back to the first active site in the preview environment", async () => {
-    // ALLOW_HOST_FALLBACK=true is the single-host reviewer setup.
+
     const resolution = await resolveHost("nobody.example");
     expect(resolution?.domain).toBeNull();
     expect(resolution?.site).toBeTruthy();

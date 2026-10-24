@@ -69,7 +69,6 @@ export function PageSettings({
   return (
     <div className="space-y-5">
       <Notice state={state} />
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Address and title</h2>
@@ -93,7 +92,6 @@ export function PageSettings({
           </div>
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Search and sharing</h2>
@@ -121,7 +119,6 @@ export function PageSettings({
               </select>
             </div>
           </div>
-
           {seoState.canonicalMode === "custom" ? (
             <div>
               <label className="label" htmlFor="seo-canonical-url">
@@ -144,7 +141,6 @@ export function PageSettings({
             />
             <p className="mt-1 text-[11px] text-slate-400">{(seoState.description ?? "").length}/180 characters.</p>
           </div>
-
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="seo-og-title">
@@ -159,7 +155,6 @@ export function PageSettings({
               <input id="seo-og-description" className="input" {...field("ogDescription")} placeholder="Defaults to the meta description" />
             </div>
           </div>
-
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="seo-share-image">
@@ -181,7 +176,6 @@ export function PageSettings({
               <input id="seo-keywords" className="input" {...field("keywords")} placeholder="rewards, trophies, casino" />
             </div>
           </div>
-
           <label className="flex items-start gap-2.5 rounded-lg border border-line bg-paper/60 px-3.5 py-3">
             <input
               type="checkbox"
@@ -196,7 +190,6 @@ export function PageSettings({
               </span>
             </span>
           </label>
-
           <button
             type="button"
             className="btn-admin btn-admin-primary"
@@ -217,7 +210,6 @@ export function PageSettings({
           </button>
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Scheduling</h2>
@@ -285,7 +277,6 @@ export function PageSettings({
           </div>
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Publishing actions</h2>
@@ -346,7 +337,6 @@ export function PageSettings({
           )}
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Save as template</h2>

@@ -27,7 +27,6 @@ export default async function SitesPage() {
         }
         breadcrumb={[{ label: "Overview", href: "/admin" }, { label: "Sites" }]}
       />
-
       {sites.length === 0 ? (
         <EmptyState
           title="No sites yet"

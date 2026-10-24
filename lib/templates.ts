@@ -31,7 +31,6 @@ export async function getTemplate(id: string): Promise<Template | null> {
   return row ?? null;
 }
 
-/** The placeholders a template declares, plus any token the document still holds. */
 export function placeholdersFor(template: Template): PlaceholderSpec[] {
   const declared = new Map(template.placeholders.map((placeholder) => [placeholder.key, placeholder]));
   const tokens = collectTokens(template.document);

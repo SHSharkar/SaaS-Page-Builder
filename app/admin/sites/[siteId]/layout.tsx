@@ -52,7 +52,6 @@ export default async function SiteLayout({
           </Link>
         </div>
       </div>
-
       <SiteTabs siteId={site.id} />
       {children}
     </div>

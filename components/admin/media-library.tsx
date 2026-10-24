@@ -69,7 +69,6 @@ export function MediaLibrary({ siteId, assets }: { siteId: string; assets: Asset
         </p>
       </div>
       <Notice state={state} />
-
       {assets.length === 0 ? (
         <p className="rounded-xl border border-line bg-white px-5 py-10 text-center text-sm text-slate-500">
           No images yet. Upload the first one above.
@@ -79,7 +78,7 @@ export function MediaLibrary({ siteId, assets }: { siteId: string; assets: Asset
           {assets.map((asset) => (
             <li key={asset.id} className="panel overflow-hidden">
               <div className="relative aspect-[4/3] bg-paper">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {}
                 <img src={asset.publicUrl} alt={asset.altText ?? ""} className="h-full w-full object-cover" />
               </div>
               <div className="space-y-2 p-3">

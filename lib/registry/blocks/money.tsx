@@ -11,8 +11,6 @@ const ctaSchema = z
   })
   .catch({ label: "Claim", href: "/join", style: "solid" as const });
 
-/* ------------------------------ bonus card ------------------------------ */
-
 export const bonusCard: BlockDefinition<{
   brand: string;
   logo: { id: string } | null;
@@ -141,7 +139,6 @@ export const bonusCard: BlockDefinition<{
                   </p>
                 </div>
               </div>
-
               <p className="mt-5 font-heading text-4xl leading-none tracking-tight sm:text-5xl" style={{ color: "var(--site-text)" }}>
                 {headline}
               </p>
@@ -162,7 +159,6 @@ export const bonusCard: BlockDefinition<{
                 ))}
               </dl>
             </div>
-
             <div className="flex flex-col justify-between gap-5 lg:border-l lg:pl-8" style={{ borderColor: "var(--site-border)" }}>
               <ul className="space-y-2 text-sm" style={{ color: "var(--site-muted)" }}>
                 <li className="flex items-center gap-2">
@@ -188,8 +184,6 @@ export const bonusCard: BlockDefinition<{
     );
   },
 };
-
-/* ------------------------------ bonus list ------------------------------ */
 
 export const bonusList: BlockDefinition<{
   eyebrow: string;
@@ -344,8 +338,6 @@ export const bonusList: BlockDefinition<{
     </Section>
   ),
 };
-
-/* --------------------------- compare table --------------------------- */
 
 type CompareRow = {
   casino: string;
@@ -505,7 +497,6 @@ export const casinoCompareTable: BlockDefinition<{
           </tbody>
         </table>
       </div>
-
       <div className={mobileStyle === "cards" ? "grid gap-3 md:hidden" : "-mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-2 md:hidden"}>
         {rows.map((row, index) => (
           <div
@@ -535,8 +526,6 @@ export const casinoCompareTable: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ----------------------------- pricing table ----------------------------- */
 
 export const pricingTable: BlockDefinition<{
   eyebrow: string;
@@ -652,8 +641,6 @@ export const pricingTable: BlockDefinition<{
   ),
 };
 
-/* ----------------------------- payment strip ----------------------------- */
-
 const PAYMENT_GLYPH: Record<string, string> = {
   visa: "card",
   mastercard: "card",
@@ -719,8 +706,6 @@ export const paymentStrip: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------- trust strip ------------------------------- */
 
 export const trustStrip: BlockDefinition<{
   items: { icon: string; label: string; detail: string }[];

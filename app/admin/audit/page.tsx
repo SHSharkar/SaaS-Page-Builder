@@ -43,7 +43,6 @@ export default async function AuditPage({
         description="Append-only, retained for 24 months. Every publish, rollback, role change and blocked deletion is recorded with the actor's role at the time."
         actions={<span className="badge badge-gray">{entries.length} shown</span>}
       />
-
       <div className="mb-4 flex flex-wrap gap-1.5">
         <Link
           href="/admin/audit"
@@ -65,7 +64,6 @@ export default async function AuditPage({
           </Link>
         ))}
       </div>
-
       <Panel>
         {entries.length === 0 ? (
           <p className="py-6 text-center text-sm text-slate-500">Nothing recorded under this filter.</p>

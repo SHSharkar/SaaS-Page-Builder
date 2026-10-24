@@ -74,10 +74,6 @@ export type VerificationOutcome = {
   checkedRecord: { name: string; value: string };
 };
 
-/**
- * DNS TXT verification. The certificate gate (Caddy's `ask` endpoint) reads
- * this table, so a hostname never receives a certificate before it is active.
- */
 export async function verifyDomain(domainId: string, actor: Actor | null): Promise<VerificationOutcome> {
   await ensureDb();
   const [domain] = await db.select().from(domains).where(eq(domains.id, domainId)).limit(1);
@@ -92,8 +88,6 @@ export async function verifyDomain(domainId: string, actor: Actor | null): Promi
     assertTransition("domain", domain.status, "active", "This hostname was disconnected; connect it again before verifying.");
   }
 
-  // pending → verifying: the attempt itself is recorded, so the screen can say
-  // "checked" even when DNS has not caught up yet.
   assertTransition("domain", domain.status, "verifying");
   if (domain.status === "pending") {
     await db
@@ -201,7 +195,6 @@ export async function removeDomain(domainId: string, actor: Actor): Promise<void
     })
     .where(eq(domains.id, domainId));
 
-  // Unbinding takes the address dark immediately.
   cacheDelete(cacheKeys.domain(domain.hostname));
   await recordAudit({
     action: "domain_removed",
@@ -237,10 +230,6 @@ export async function makePrimaryDomain(siteId: string, domainId: string, actor:
   });
 }
 
-/**
- * The certificate gate: issuance happens only for a hostname recorded against
- * an active site (the Caddy ask-endpoint rule, PRD M4).
- */
 export async function canIssueCertificate(rawHostname: string): Promise<boolean> {
   await ensureDb();
   const { sites } = await import("@/lib/db/schema");

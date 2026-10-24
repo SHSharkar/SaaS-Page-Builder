@@ -86,7 +86,6 @@ export function ImportReview({
         <strong className="font-semibold">Review is mandatory.</strong> This is a proposal, not an import: {counts.mapped} of{" "}
         {counts.sections} sections were recognised, {counts.unmapped} were not. Nothing exists until you apply it.
       </div>
-
       <div className="panel">
         <div className="grid gap-4 p-5 sm:grid-cols-2">
           <div>
@@ -103,7 +102,6 @@ export function ImportReview({
           </div>
         </div>
       </div>
-
       <div className="space-y-3">
         {segments.map((segment, index) => {
           const decision = decisions[segment.id];
@@ -145,7 +143,6 @@ export function ImportReview({
                   Keep
                 </label>
               </div>
-
               {decision.keep ? (
                 <div className="grid gap-3 p-5 sm:grid-cols-2">
                   <div>
@@ -186,7 +183,6 @@ export function ImportReview({
           );
         })}
       </div>
-
       {unmapped.length ? (
         <section className="panel">
           <div className="border-b border-line px-5 py-4">
@@ -228,7 +224,6 @@ export function ImportReview({
         </button>
         <span className="text-[11px] text-slate-500">The page is created unpublished; publish it separately.</span>
       </div>
-
       <Notice state={state} />
     </div>
   );

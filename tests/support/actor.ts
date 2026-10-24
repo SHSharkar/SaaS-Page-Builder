@@ -4,11 +4,6 @@ import { users } from "@/lib/db/schema";
 import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
 import type { Actor } from "@/lib/auth/session";
 
-/**
- * The suites exercise the domain layer, not the cookie layer, so they build the
- * same Actor shape `getActor` produces — roles and permissions read from the
- * database — and give it a synthetic session.
- */
 export async function actorForEmail(email: string): Promise<Actor> {
   await ensureDb();
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);

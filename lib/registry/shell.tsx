@@ -2,11 +2,6 @@ import type { CSSProperties, ReactNode } from "react";
 import { lookupMedia } from "@/lib/media/refs";
 import type { Appearance } from "./types";
 
-/* ------------------------------------------------------------------ *
- * Section shell — every block gets the same background, spacing, width,
- * alignment and per-device visibility controls.
- * ------------------------------------------------------------------ */
-
 const SPACING: Record<Appearance["spacing"], string> = {
   none: "py-0",
   sm: "py-8",
@@ -96,10 +91,6 @@ export function Section({
     </Tag>
   );
 }
-
-/* ------------------------------------------------------------------ *
- * Small shared pieces
- * ------------------------------------------------------------------ */
 
 export type LinkValue = { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
 
@@ -238,7 +229,6 @@ export const GLYPH_OPTIONS = Object.keys(GLYPHS).map((key) => ({
   value: key,
 }));
 
-/** Safe rich text: a tiny markdown subset rendered as React nodes, never HTML. */
 export function RichText({ text, className = "" }: { text?: string; className?: string }) {
   if (!text) return null;
   const blocks = text.split(/\n{2,}/);
@@ -319,7 +309,6 @@ export function MediaImage({
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={media.url}
       alt={label}

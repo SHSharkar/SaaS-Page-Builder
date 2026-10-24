@@ -40,7 +40,6 @@ export default async function ImportReviewPage({
         ]}
         actions={<StatusBadge status={job.status} />}
       />
-
       {!mapping ? (
         <Panel title="Nothing to review yet">
           <p className="text-sm text-slate-500">

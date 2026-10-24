@@ -55,19 +55,11 @@ export async function getPrimarySite(): Promise<Site | null> {
 export type HostResolution = {
   site: Site;
   domain: Domain | null;
-  /** false when the site is suspended or the domain is not serving yet */
+
   canServe: boolean;
   reason?: string;
 };
 
-/**
- * Hostname resolution against the domain table (PRD M10). The cache holds
- * `dom:{hostname}`; binding, removing or verifying a domain clears it.
- *
- * In this single-host preview environment an unknown host falls back to the
- * first active site, so the reviewer can open the published page directly.
- * Production sets ALLOW_HOST_FALLBACK=false.
- */
 export async function resolveHost(rawHost: string): Promise<HostResolution | null> {
   await ensureDb();
   const hostname = normalizeHostname(rawHost);
@@ -204,14 +196,12 @@ export async function setSiteStatus(siteId: string, status: "active" | "suspende
     .where(eq(sites.id, siteId));
 }
 
-/** Includes soft-deleted rows: the restore path needs to see them. */
 export async function getSiteRow(siteId: string): Promise<Site | null> {
   await ensureDb();
   const [row] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
   return row ?? null;
 }
 
-/** Soft-deleted sites inside their restore window. */
 export async function listDeletedSites() {
   await ensureDb();
   const rows = await db.select().from(sites).where(eq(sites.status, "deleted"));
@@ -235,13 +225,11 @@ export async function restoreSite(siteId: string): Promise<Site> {
   return restored;
 }
 
-/** The hard delete: rows cascade, hostnames are released with the site. */
 export async function purgeSite(siteId: string): Promise<void> {
   await ensureDb();
   const site = await getSiteRow(siteId);
   if (!site) throw new Error("Site not found.");
-  // A hard delete is only ever the second stage: a live site must be deleted first,
-  // so nobody can destroy a running site with a single mis-click.
+
   if (site.status !== "deleted") {
     throw new Error("Delete the site before purging it. Only a deleted site can be purged.");
   }

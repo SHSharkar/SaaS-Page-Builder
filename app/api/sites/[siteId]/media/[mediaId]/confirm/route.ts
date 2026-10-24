@@ -4,11 +4,6 @@ import { confirmUpload } from "@/lib/media";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Step two: read the stored bytes back, verify the declared type and the
- * checksum, then flip `pending` → `ready`. Anything that fails leaves the row
- * pending (and swept later) rather than exposing unverified bytes.
- */
 export async function POST(request: Request, { params }: { params: Promise<{ siteId: string; mediaId: string }> }) {
   const actor = await getActor();
   if (!actor) return NextResponse.json({ error: "Sign in first." }, { status: 401 });

@@ -9,7 +9,6 @@ import {
 } from "@/lib/documents";
 import type { ResolvedMedia } from "@/lib/media/refs";
 
-/** Theme tokens become CSS variables — blocks never hard-code a colour. */
 export function themeStyle(theme: SiteTheme): CSSProperties {
   const radius = RADIUS_TOKENS[theme.radius] ?? RADIUS_TOKENS.soft;
   return {
@@ -28,10 +27,6 @@ export function themeStyle(theme: SiteTheme): CSSProperties {
   } as CSSProperties;
 }
 
-/**
- * The public renderer walks the same registry the editor uses, so a component
- * can never render one way in the editor and another for visitors.
- */
 export function BlockRenderer({ document }: { document: PageDocument | null | undefined }) {
   if (!document?.content?.length) return null;
   return (
@@ -102,7 +97,6 @@ export type PageMetadataInput = {
   noindex?: boolean;
 };
 
-/** Page tags win, then the site defaults, then the site name. */
 export function buildMetadata(input: PageMetadataInput) {
   const defaultsSeo = ((input.defaults?.root?.props as Record<string, unknown> | undefined)?.seo ??
     {}) as Partial<PageSeo>;

@@ -1,11 +1,4 @@
-/**
- * The browser half of the two-step upload, shared by the editor's media field
- * and the library screen.
- *
- * With R2 configured the bytes go straight to the bucket through a presigned
- * PUT; without it they post to our own route. Either way the row only becomes
- * `ready` after the server has read the bytes back and verified them.
- */
+
 export type UploadedAsset = {
   id: string;
   url: string;

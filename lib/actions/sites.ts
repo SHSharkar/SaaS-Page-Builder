@@ -93,7 +93,7 @@ export async function suspendSiteAction(input: { siteId: string; suspend: boolea
     if (!site) throw new Error("Site not found.");
     const hostnames = (await listSiteDomains(input.siteId)).map((domain) => domain.hostname);
     await setSiteStatus(input.siteId, input.suspend ? "suspended" : "active");
-    // Serving stops (or resumes) immediately: clear every cache key for the site.
+
     invalidateSite(input.siteId, hostnames);
     await recordAudit({
       action: input.suspend ? "site_suspended" : "site_updated",
@@ -182,8 +182,7 @@ export async function deleteSiteAction(input: { siteId: string }): Promise<Actio
     await setSiteStatus(input.siteId, "deleted");
     await db.update(domains).set({ status: "removed", removedAt: new Date() }).where(eq(domains.siteId, input.siteId));
     invalidateSite(input.siteId, hostnames);
-    // Two-stage: serving stops now, rows stay for the restore window, and the
-    // queued purge is a no-op if the site is restored first.
+
     await enqueue(
       "site.purge",
       { siteId: input.siteId },
@@ -252,7 +251,6 @@ export async function purgeSiteAction(input: { siteId: string }): Promise<Action
   }
 }
 
-/** Soft-deleted sites awaiting restore or purge, newest first. */
 export async function listDeletedSitesForAdmin() {
   const { listDeletedSites } = await import("@/lib/sites");
   return (await listDeletedSites()).sort((a, b) => (b.site.deletedAt?.getTime() ?? 0) - (a.site.deletedAt?.getTime() ?? 0));

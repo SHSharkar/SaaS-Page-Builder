@@ -3,11 +3,6 @@ import { canTransition, KEEP, nextStates } from "@/lib/lifecycle";
 import { LifecycleError } from "@/lib/errors";
 import { assertTransition } from "@/lib/lifecycle";
 
-/**
- * Group Y of the data assessment checklist: the state machines must reject
- * every illegal move and must not lose a legal one. These are the transitions
- * the product promises in PRD 3.5.
- */
 describe("page state machine", () => {
   it("allows draft → published → draft", () => {
     expect(canTransition("page", "draft", "published")).toBe(true);

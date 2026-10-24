@@ -24,7 +24,6 @@ import { adminActor } from "./support/actor";
 let actor: Actor;
 let siteId: string;
 
-/** A document with one heading block, so the validator has something real to walk. */
 function documentWith(text: string) {
   return {
     ...newPageDocument(),
@@ -59,7 +58,7 @@ describe("draft saves", () => {
     await expect(saveDraft(siteId, page.id, documentWith("Old"), page.lockVersion, actor)).rejects.toThrow(
       /Refresh to load their version/,
     );
-    // The winning write is still the one that landed first.
+
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.lockVersion).toBe(saved.lockVersion);
   });
@@ -97,7 +96,6 @@ describe("publishing", () => {
     const versions = await listVersions(page.id);
     expect(versions).toHaveLength(1);
 
-    // Editing the draft afterwards must not touch the snapshot.
     await saveDraft(siteId, page.id, documentWith("Edited later"), saved.lockVersion, actor);
     const after = await listVersions(page.id);
     expect(after[0].document).toEqual(versions[0].document);
@@ -153,7 +151,7 @@ describe("publishing", () => {
     await restorePage(siteId, page.id, actor);
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.status).toBe("draft");
-    // Restoring an already-draft page is legal and idempotent.
+
     await restorePage(siteId, page.id, actor);
   });
 

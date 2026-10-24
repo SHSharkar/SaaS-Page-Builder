@@ -106,7 +106,6 @@ export function DefaultSeoForm({
             </label>
           </div>
         </section>
-
         <section className="panel">
           <div className="border-b border-line px-5 py-4">
             <h2 className="text-sm font-semibold text-ink-900">Preview</h2>
@@ -128,7 +127,6 @@ export function DefaultSeoForm({
           </div>
         </section>
       </div>
-
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -155,7 +153,6 @@ export function DefaultSeoForm({
         </button>
         <p className="text-[11px] text-slate-500">Publishing clears every page cache for this site.</p>
       </div>
-
       <Notice state={state} />
     </div>
   );

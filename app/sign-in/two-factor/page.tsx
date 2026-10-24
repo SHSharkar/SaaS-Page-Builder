@@ -15,8 +15,6 @@ export default async function TwoFactorPage({
   const target = next?.startsWith("/") && !next.startsWith("//") ? next : null;
   const actor = await getActor();
   if (actor) redirect(target ?? "/admin");
-  // Better Auth holds the half-finished sign-in in its own short-lived cookie.
-  // If it is gone the verify call below fails, so there is nothing to pre-check.
 
   return (
     <AuthShell

@@ -1,12 +1,4 @@
-/**
- * Object storage. Two backends, one contract:
- *
- * - `r2` — Cloudflare R2 with presigned PUTs (production, ADR-004).
- * - `local` — the filesystem under MEDIA_DIR (this build and the CI smoke run).
- *
- * Bytes are always re-read and re-verified after upload before a row becomes
- * `ready`, whichever backend stored them.
- */
+
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -26,7 +18,6 @@ export function storageBackend(): StorageBackend {
   return R2.accountId && R2.accessKeyId && R2.secretAccessKey && R2.bucket ? "r2" : "local";
 }
 
-/** In R2 mode bytes are fetched from the public base; locally they are a route. */
 export function publicUrlFor(key: string): string {
   if (storageBackend() === "r2" && R2.publicBase) {
     return `${R2.publicBase.replace(/\/$/, "")}/${key}`;
@@ -101,7 +92,7 @@ export async function deleteObject(key: string): Promise<void> {
     try {
       await unlink(path.join(MEDIA_DIR, key));
     } catch {
-      /* missing file is already the desired state */
+
     }
     return;
   }
@@ -110,10 +101,6 @@ export async function deleteObject(key: string): Promise<void> {
   await client.send(new DeleteObjectCommand({ Bucket: R2.bucket, Key: key }));
 }
 
-/**
- * A direct browser → R2 upload link. The local backend has no such thing, so it
- * returns null and the caller falls back to posting the bytes to our own route.
- */
 export async function presignPut(
   key: string,
   contentType: string,

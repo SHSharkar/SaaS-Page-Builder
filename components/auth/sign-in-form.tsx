@@ -50,7 +50,6 @@ export function SignInForm({
           defaultValue={demo[0]?.password}
         />
       </div>
-
       {state.error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
           {state.error}
@@ -60,7 +59,6 @@ export function SignInForm({
       <button type="submit" className="btn-admin btn-admin-primary w-full" disabled={pending}>
         {pending ? "Checking…" : "Sign in"}
       </button>
-
       <div className="rounded-lg border border-line bg-paper/60 p-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
           Demo accounts

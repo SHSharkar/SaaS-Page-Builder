@@ -7,11 +7,6 @@ import { MobileNav, SidebarNav, type NavItem } from "@/components/admin/nav";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Each destination names the permission that opens it, so the sidebar shows
- * exactly what the actor can reach. The guards on the pages themselves are what
- * enforce it; this just avoids offering doors that will not open.
- */
 const NAV: (NavItem & { permission?: string })[] = [
   { href: "/admin", label: "Overview", exact: true },
   { href: "/admin/sites", label: "Sites", permission: "site.view" },
@@ -40,7 +35,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <p className="text-[10px] leading-tight text-white/40">Internal platform</p>
           </div>
         </Link>
-
         <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-2.5">
           <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/40">
             Sites
@@ -68,9 +62,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             + New site
           </Link>
         </div>
-
         <SidebarNav items={nav} />
-
         <div className="mt-auto rounded-lg border border-white/10 p-3">
           <p className="text-[12px] font-semibold text-white/90">{actor.user.name}</p>
           <p className="truncate text-[10px] text-white/40">{actor.user.email}</p>
@@ -91,7 +83,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </div>
         </div>
       </aside>
-
       <div className="min-w-0">
         <div className="sticky top-0 z-30 border-b border-line bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
           <div className="mb-2 flex items-center justify-between">
@@ -109,7 +100,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </div>
           <MobileNav items={nav} />
         </div>
-
         <main className="px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mx-auto max-w-[1200px]">
             {actor.session.impersonatedBy ? (

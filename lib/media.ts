@@ -27,7 +27,6 @@ export function sniffMime(bytes: Buffer): { mime: string; ext: string } | null {
   return SIGNATURES.find((signature) => signature.test(bytes)) ?? null;
 }
 
-/** Minimal dimension probe: enough for width/height attributes, no image library. */
 export function probeDimensions(bytes: Buffer, mime: string): { width: number | null; height: number | null } {
   try {
     if (mime === "image/png" && bytes.length > 24) {
@@ -57,7 +56,7 @@ export function probeDimensions(bytes: Buffer, mime: string): { width: number | 
       }
     }
   } catch {
-    /* malformed header: keep nulls */
+
   }
   return { width: null, height: null };
 }
@@ -91,7 +90,6 @@ export async function getMediaById(mediaId: string): Promise<MediaAsset | null> 
   return row ?? null;
 }
 
-/** Resolved map handed to the renderer and the editor (ADR-004). */
 export async function mediaMapFor(siteId: string): Promise<Map<string, ResolvedMedia>> {
   await ensureDb();
   const cacheKey = `media:${siteId}`;
@@ -123,11 +121,6 @@ export type UploadResult = {
   deduplicated: boolean;
 };
 
-/**
- * The direct-upload half of the media lifecycle: the row is created `pending`,
- * the bytes land in storage, they are read back and verified, and only then
- * does the row become `ready`. A pending row that never confirms is swept.
- */
 export async function beginUpload(options: {
   siteId: string;
   filename: string;
@@ -153,7 +146,7 @@ export async function beginUpload(options: {
       publicUrl: publicUrlFor(key),
       mimeType: options.contentType,
       sizeBytes: options.sizeBytes,
-      // A pending row has no checksum yet: it is assigned when bytes verify.
+
       checksum: `pending:${token}`,
       altText: options.altText ?? options.filename.replace(/\.[a-z0-9]+$/i, "").slice(0, 160),
       status: "pending",
@@ -170,7 +163,6 @@ export async function beginUpload(options: {
   };
 }
 
-/** Re-reads the stored bytes and only then flips pending → ready. */
 export async function confirmUpload(options: {
   siteId: string;
   mediaId: string;
@@ -203,7 +195,6 @@ export async function confirmUpload(options: {
     throw new Error("The checksum did not match the uploaded file.");
   }
 
-  // Deduplicate after the bytes exist: the same image uploaded twice keeps one row.
   const [duplicate] = await db
     .select()
     .from(mediaAssets)
@@ -276,7 +267,6 @@ export async function uploadMedia(options: {
     .limit(1);
   if (existing) return { asset: existing, deduplicated: true };
 
-  // Stage 1: the row exists but is not usable yet.
   const key = `${siteId}/pending-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}.${sniffed.ext}`;
   const [pending] = await db
     .insert(mediaAssets)
@@ -295,10 +285,8 @@ export async function uploadMedia(options: {
     })
     .returning();
 
-  // Stage 2: bytes land in storage.
   await putObject(key, bytes, sniffed.mime);
 
-  // Stage 3: verification, then pending → ready with the final content-hashed key.
   const finalKey = `${siteId}/${checksum.slice(0, 16)}.${sniffed.ext}`;
   const dimensions = kind === "image" ? probeDimensions(bytes, sniffed.mime) : { width: null, height: null };
   const [asset] = await db
@@ -352,7 +340,6 @@ async function markMediaDeleted(mediaId: string): Promise<void> {
     .where(eq(mediaAssets.id, mediaId));
 }
 
-/** The sweeper for pending rows: an upload that never confirmed never becomes visible. */
 export async function sweepPendingMedia(): Promise<number> {
   await ensureDb();
   const stale = await db
@@ -368,36 +355,49 @@ export async function sweepPendingMedia(): Promise<number> {
 
 export type MediaReference = { pageId: string | null; pageTitle: string };
 
-/**
- * The reference check (FR-015). Documents store media identifiers, so the
- * check is exact: a jsonpath recursive descent finds any object carrying the
- * identifier in a draft, a snapshot, global content or a staff template.
- */
 export async function findMediaReferences(siteId: string, mediaId: string): Promise<MediaReference[]> {
   await ensureDb();
   const jsonpath = `$.** ? (@.id == $mediaId)`;
   const params = JSON.stringify({ mediaId });
 
   const draftRefs = await db.execute<{ id: string; title: string }>(sql`
+
     select id, title from page
+
     where site_id = ${siteId}
+
       and deleted_at is null
+
       and draft_document is not null
+
       and jsonb_path_exists(draft_document, ${jsonpath}::jsonpath, ${params}::jsonb)
+
   `);
   const versionRefs = await db.execute<{ id: string; title: string }>(sql`
+
     select p.id, p.title from page p
+
     join page_version v on v.page_id = p.id
+
     where p.site_id = ${siteId}
+
       and jsonb_path_exists(v.document, ${jsonpath}::jsonpath, ${params}::jsonb)
+
   `);
   const contentRefs = await db.execute<{ id: string; title: string }>(sql`
+
     select id, kind::text as title from site_content
+
     where site_id = ${siteId}
+
       and (
+
         jsonb_path_exists(draft_document, ${jsonpath}::jsonpath, ${params}::jsonb)
+
         or jsonb_path_exists(published_document, ${jsonpath}::jsonpath, ${params}::jsonb)
+
       )
+
   `);
 
   const seen = new Map<string, MediaReference>();
@@ -444,11 +444,11 @@ export async function deleteMedia(siteId: string, mediaId: string, actor: Actor)
     targetType: "media_asset",
     targetId: mediaId,
   });
-  // File removal happens after the row is marked, sweepable if it fails.
+
   try {
     await deleteObject(asset.storageKey);
   } catch {
-    /* the orphan sweep is the backstop */
+
   }
 }
 

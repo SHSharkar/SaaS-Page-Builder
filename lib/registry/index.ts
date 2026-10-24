@@ -51,11 +51,6 @@ export type ValidationResult =
 
 const MAX_DOCUMENT_CHARS = 200_000;
 
-/**
- * The server re-checks every save against the registry (founding principle:
- * the server is the source of truth). Unknown aliases are refused so a
- * document can never point at a component the code does not ship.
- */
 export function validateDocument(input: unknown): ValidationResult {
   const errors: string[] = [];
   const raw = (input ?? {}) as Partial<PageDocument>;
@@ -82,9 +77,7 @@ export function validateDocument(input: unknown): ValidationResult {
       errors.push(`"${definition.name}" has invalid fields: ${parsed.error.issues[0]?.message ?? "unknown"}`);
       continue;
     }
-    // The server owns node identity: a block saved without an id gets one here,
-    // so the editor can always key its layer tree. Duplicates are refused
-    // because two nodes sharing an id make selection and reordering ambiguous.
+
     const props = { ...(parsed.data as Record<string, unknown>) };
     const id = typeof props.id === "string" ? props.id.trim() : "";
     if (id && seenIds.has(id)) {
@@ -120,7 +113,6 @@ function emptyDoc(): PageDocument {
   return { schemaVersion: DOCUMENT_SCHEMA_VERSION, root: { props: { ...DEFAULT_ROOT_PROPS } }, content: [] };
 }
 
-/** Walks a block's field definitions so repeaters resolve too. */
 function resolveFields(
   fields: FieldDef[],
   props: Record<string, unknown>,
@@ -146,7 +138,6 @@ function resolveFields(
   return out;
 }
 
-/** Replaces media identifiers with resolved URLs immediately before rendering. */
 export function resolveDocumentMedia(doc: PageDocument, media: Map<string, ResolvedMedia>): PageDocument {
   return {
     ...doc,

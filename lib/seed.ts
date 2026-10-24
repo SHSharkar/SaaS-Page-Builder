@@ -55,7 +55,6 @@ function doc(content: BlockNode[]): PageDocument {
   };
 }
 
-/** A stand-in actor for the seed's own writes; it carries the admin grants. */
 async function seedActor(user: User): Promise<Actor> {
   const roles = await listRoles();
   const adminRole = roles.find((role) => role.key === "admin");
@@ -81,13 +80,10 @@ async function seedActor(user: User): Promise<Actor> {
 }
 
 export async function seedIfEmpty(): Promise<void> {
-  // The catalogue and the three system roles exist on every boot, whether or
-  // not the demo content does.
+
   await syncRbacCatalog();
   const [existing] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
   if ((existing?.count ?? 0) > 0) return;
-
-  /* ------------------------------ staff ------------------------------ */
 
   const roles = await listRoles();
   const roleId = (key: string) => {
@@ -128,8 +124,6 @@ export async function seedIfEmpty(): Promise<void> {
   });
 
   const actor = await seedActor(admin);
-
-  /* ------------------------------- site ------------------------------- */
 
   const site = await createSite({
     name: "Trofeo Reward",
@@ -200,8 +194,6 @@ export async function seedIfEmpty(): Promise<void> {
     requestedBy: admin.id,
   });
 
-  /* ------------------------------ globals ------------------------------ */
-
   const navigation = doc([
     blk("site-header", {
       logoText: "Trofēo",
@@ -246,8 +238,6 @@ export async function seedIfEmpty(): Promise<void> {
     await saveGlobalsDraft(site.id, kind, document, row?.lockVersion ?? 0, actor);
     await publishGlobals(site.id, kind, actor);
   }
-
-  /* ------------------------------- pages ------------------------------- */
 
   const homeDocument = doc([
     blk(
@@ -463,7 +453,6 @@ export async function seedIfEmpty(): Promise<void> {
     },
   });
 
-  // Version 1, then a small edit, then version 2 — the history screen has real depth.
   await publishPage(site.id, home.id, actor, "manual");
 
   const walletDocument = doc([
@@ -595,8 +584,6 @@ export async function seedIfEmpty(): Promise<void> {
   await publishPage(site.id, home.id, actor, "manual");
   await db.update(pages).set({ draftDocument: secondVersionDoc, lockVersion: 2 }).where(eq(pages.id, home.id));
 
-  /* ------------------------------ templates ------------------------------ */
-
   const gamePlaceholders: PlaceholderSpec[] = [
     { key: "brand", label: "Brand name", kind: "text", defaultValue: "Trofēo Reward" },
     { key: "bonus_amount", label: "Bonus amount", kind: "text", defaultValue: "100% up to $200" },
@@ -715,8 +702,6 @@ export async function seedIfEmpty(): Promise<void> {
     },
   ]);
 
-  /* --------------------------- import in review --------------------------- */
-
   const sample = await readFile(path.join(process.cwd(), "public", "seed", "sample-lander.html"));
   await createImportJob({
     siteId: site.id,
@@ -724,8 +709,6 @@ export async function seedIfEmpty(): Promise<void> {
     bytes: sample,
     actor: await seedActor(editor),
   });
-
-  /* ------------------------------ settings ------------------------------ */
 
   await db.insert(platformSettings).values([
     { key: "platform.name", value: "Trofēo Pages", isSecret: false, updatedBy: admin.id },

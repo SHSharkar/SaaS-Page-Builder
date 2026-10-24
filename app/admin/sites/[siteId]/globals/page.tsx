@@ -28,7 +28,6 @@ export default async function SiteGlobalsPage({ params }: { params: Promise<{ si
         description="Header, footer and default tags are edited once per site. Each keeps its own draft until you publish it."
         breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Global content" }]}
       />
-
       <div className="grid gap-4 md:grid-cols-3">
         {kinds.map((kind) => {
           const content = contents.find((row) => row.kind === kind);
@@ -63,7 +62,6 @@ export default async function SiteGlobalsPage({ params }: { params: Promise<{ si
           );
         })}
       </div>
-
       <Panel
         className="mt-5"
         title="How global content reaches visitors"

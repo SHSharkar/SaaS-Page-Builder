@@ -4,11 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { stepUpAction, type FormState } from "@/lib/actions/auth";
 
-/**
- * Sensitive actions answer 428 when the session's step-up window has lapsed.
- * This notice explains it and takes the password re-confirmation inline, so the
- * staff member is never dropped out to a different screen mid-task.
- */
 export function StepUpNotice({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   const [state, setState] = useState<FormState | null>(null);

@@ -29,7 +29,6 @@ export function PlatformSettings({
   return (
     <div className="space-y-5">
       <Notice state={state} />
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Runtime settings</h2>
@@ -77,7 +76,6 @@ export function PlatformSettings({
           ) : null}
         </ul>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Retention</h2>
@@ -122,7 +120,6 @@ export function PlatformSettings({
           <span className="text-[11px] text-slate-500">Runs daily from the queue in production.</span>
         </div>
       </section>
-
       <section className="panel">
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-sm font-semibold text-ink-900">Worker and cache</h2>

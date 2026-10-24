@@ -69,7 +69,6 @@ export function MediaField({
           aria-label={selected ? `Change image: ${selected.alt ?? ""}` : "Choose an image"}
         >
           {selected?.url ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img src={selected.url} alt={selected.alt ?? ""} className="h-full w-full object-cover" />
           ) : (
             <span className="text-[10px] text-slate-400">Choose</span>
@@ -108,7 +107,6 @@ export function MediaField({
         }}
       />
       {error ? <p className="mt-1 text-[11px] text-red-600">{error}</p> : null}
-
       {open ? (
         <div className="mt-2 max-h-52 overflow-y-auto rounded-md border border-line bg-white p-2">
           {media.length === 0 ? (
@@ -130,7 +128,7 @@ export function MediaField({
                   }}
                   title={item.alt}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {}
                   <img src={item.url} alt={item.alt ?? ""} className="h-14 w-full object-cover" />
                 </button>
               ))}

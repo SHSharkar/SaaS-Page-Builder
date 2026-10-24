@@ -5,8 +5,6 @@ import { SlideCarousel } from "@/components/blocks/slide-carousel";
 
 const IMAGE_NULL = z.object({ id: z.string() }).nullable().catch(null);
 
-/* ------------------------------- rich text ------------------------------- */
-
 export const richText: BlockDefinition<{
   eyebrow: string;
   heading: string;
@@ -61,8 +59,6 @@ export const richText: BlockDefinition<{
     </Section>
   ),
 };
-
-/* --------------------------------- image --------------------------------- */
 
 export const imageBlock: BlockDefinition<{
   image: { id: string } | null;
@@ -134,8 +130,6 @@ export const imageBlock: BlockDefinition<{
     );
   },
 };
-
-/* -------------------------------- carousel -------------------------------- */
 
 export const carousel: BlockDefinition<{
   eyebrow: string;
@@ -209,8 +203,6 @@ export const carousel: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------- video embed ------------------------------- */
 
 export const videoEmbed: BlockDefinition<{
   provider: "youtube" | "vimeo";
@@ -298,8 +290,6 @@ export const videoEmbed: BlockDefinition<{
     );
   },
 };
-
-/* -------------------------------- cards grid -------------------------------- */
 
 export const cardsGrid: BlockDefinition<{
   eyebrow: string;
@@ -426,8 +416,6 @@ export const cardsGrid: BlockDefinition<{
   },
 };
 
-/* ---------------------------------- steps ---------------------------------- */
-
 export const steps: BlockDefinition<{
   eyebrow: string;
   title: string;
@@ -496,8 +484,6 @@ export const steps: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------ features grid ------------------------------ */
 
 export const featuresGrid: BlockDefinition<{
   eyebrow: string;
@@ -602,8 +588,6 @@ export const featuresGrid: BlockDefinition<{
   ),
 };
 
-/* ----------------------------------- FAQ ----------------------------------- */
-
 export const faq: BlockDefinition<{
   eyebrow: string;
   title: string;
@@ -696,8 +680,6 @@ export const faq: BlockDefinition<{
     );
   },
 };
-
-/* ------------------------------ divider spacer ------------------------------ */
 
 export const dividerSpacer: BlockDefinition<{
   kind: "divider" | "space";

@@ -1,12 +1,4 @@
-/**
- * The cache layer (PRD 3.7). Keys and invalidation are written to the Valkey
- * contract; this build stores them in-process because it is a single-server
- * deployment. Swapping in ioredis touches this file only.
- *
- * The one correctness rule: every takedown clears its keys synchronously
- * inside the same request that makes the change. Invalidation runs after the
- * write commits and a failure surfaces to the person acting, never silently.
- */
+
 type Entry = { value: unknown; expiresAt: number };
 
 const store = new Map<string, Entry>();
@@ -57,7 +49,6 @@ export const cacheKeys = {
   rate: (scope: string, window: string) => `rl:${scope}:${window}`,
 };
 
-/** Publish, unpublish, archive, rollback, site deletion — all land here. */
 export function invalidatePageCache(siteId: string): number {
   return cacheDeletePrefix(cacheKeys.pagePrefix(siteId));
 }
@@ -76,7 +67,6 @@ export function invalidateSite(siteId: string, hostnames: string[] = []): number
   return removed;
 }
 
-/** Returns true when the request is allowed. */
 export function consumeRateLimit(scope: string, limit: number, windowSeconds: number): boolean {
   const bucket = Math.floor(Date.now() / (windowSeconds * 1000));
   const key = cacheKeys.rate(scope, String(bucket));

@@ -30,7 +30,6 @@ export default async function TemplatesPage() {
           ) : null
         }
       />
-
       <div className="space-y-6">
         <section>
           <div className="mb-3 flex items-baseline justify-between">
@@ -66,7 +65,6 @@ export default async function TemplatesPage() {
             ) : null}
           </div>
         </section>
-
         <section>
           <div className="mb-3 flex items-baseline justify-between">
             <h2 className="text-sm font-semibold text-ink-900">Saved by the team</h2>

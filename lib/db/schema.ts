@@ -23,11 +23,6 @@ import type {
   SiteTheme,
 } from "../documents";
 
-/* ------------------------------------------------------------------ *
- * Enums — every state column has a paired reason column where the PRD
- * asks for one (section 3.5).
- * ------------------------------------------------------------------ */
-
 export const siteStatus = pgEnum("site_status", ["active", "suspended", "deleted"]);
 export const domainKind = pgEnum("domain_kind", ["platform_subdomain", "custom"]);
 export const domainStatus = pgEnum("domain_status", [
@@ -136,12 +131,6 @@ export const auditAction = pgEnum("audit_action", [
   "passkey_removed",
 ]);
 
-/* ------------------------------------------------------------------ *
- * M1 Identity & access. Better Auth owns identity (user, account,
- * session, verification, two-factor); this app owns authorization
- * (role, permission, role_permission, user_role) and invitations.
- * ------------------------------------------------------------------ */
-
 export const users = pgTable(
   "user",
   {
@@ -150,12 +139,12 @@ export const users = pgTable(
     email: text("email").notNull(),
     emailVerified: boolean("email_verified").notNull().default(false),
     image: text("image"),
-    /** The Better Auth admin plugin's role column: one role key per staff member. */
+
     role: text("role").notNull().default("viewer"),
     banned: boolean("banned").notNull().default(false),
     banReason: text("ban_reason"),
     banExpires: timestamp("ban_expires", { withTimezone: true }),
-    /** Set when an admin creates an account or resets a password. */
+
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
     lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
@@ -165,7 +154,6 @@ export const users = pgTable(
   (t) => [uniqueIndex("user_email_idx").on(t.email), index("user_role_idx").on(t.role)],
 );
 
-/** Better Auth credential and (later) social accounts. The only writer is Better Auth. */
 export const accounts = pgTable(
   "account",
   {
@@ -202,9 +190,9 @@ export const sessions = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
-    /** Fresh-proof window for sensitive acts, owned by this app. */
+
     stepUpUntil: timestamp("step_up_until", { withTimezone: true }),
-    /** Set by the admin plugin while one staff member views the app as another. */
+
     impersonatedBy: text("impersonated_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -235,7 +223,7 @@ export const twoFactors = pgTable(
     secret: text("secret").notNull(),
     backupCodes: text("backup_codes").notNull(),
     verified: boolean("verified").notNull().default(true),
-    /** Anti-bruteforce counters the two-factor plugin expects to own. */
+
     failedVerificationCount: integer("failed_verification_count").notNull().default(0),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -244,7 +232,6 @@ export const twoFactors = pgTable(
   (t) => [index("two_factor_user_idx").on(t.userId)],
 );
 
-/** WebAuthn credentials owned by the passkey plugin. */
 export const passkeys = pgTable(
   "passkey",
   {
@@ -265,7 +252,6 @@ export const passkeys = pgTable(
   (t) => [index("passkey_user_idx").on(t.userId), uniqueIndex("passkey_credential_idx").on(t.credentialID)],
 );
 
-/** Storage for Better Auth's built-in rate limiter. */
 export const rateLimits = pgTable("rate_limit", {
   id: uuid("id").primaryKey().defaultRandom(),
   key: text("key").notNull(),
@@ -273,11 +259,6 @@ export const rateLimits = pgTable("rate_limit", {
   lastRequest: bigint("last_request", { mode: "number" }).notNull().default(0),
 });
 
-/**
- * A password-reset link Better Auth minted, kept so an admin can hand it over:
- * this deployment has no mail transport, so the link is shown once on the team
- * screen instead of being emailed.
- */
 export const staffResetLinks = pgTable(
   "staff_reset_link",
   {
@@ -293,11 +274,6 @@ export const staffResetLinks = pgTable(
   (t) => [index("staff_reset_link_user_idx").on(t.userId, t.createdAt)],
 );
 
-/**
- * Authorization. Roles are rows, permissions are rows, and the join tables are
- * the only thing a guard reads. The catalogue of permission keys lives in
- * `lib/auth/permissions.ts` so code and data cannot drift apart.
- */
 export const roles = pgTable(
   "role",
   {
@@ -307,11 +283,7 @@ export const roles = pgTable(
     description: text("description").notNull().default(""),
     rank: integer("rank").notNull().default(0),
     isSystem: boolean("is_system").notNull().default(false),
-    /**
-     * Whether the code-defined grants have been written into this role once.
-     * After that the matrix in /admin/roles owns them, so an admin can narrow
-     * Editor or Viewer without the next boot undoing it.
-     */
+
     permissionsSeeded: boolean("permissions_seeded").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -349,11 +321,6 @@ export const rolePermissions = pgTable(
   (t) => [primaryKey({ columns: [t.roleId, t.permissionId] })],
 );
 
-/**
- * T20 — the only door into the platform. Invite-only; self-registration
- * does not exist (ADR-002). The role is a row, so a custom role can be
- * attached to an invitation.
- */
 export const staffInvites = pgTable(
   "staff_invite",
   {
@@ -378,10 +345,6 @@ export const staffInvites = pgTable(
     index("staff_invite_sweep_idx").on(t.status, t.expiresAt),
   ],
 );
-
-/* ------------------------------------------------------------------ *
- * M3 Sites (T09) and global content (T11)
- * ------------------------------------------------------------------ */
 
 export const sites = pgTable(
   "site",
@@ -423,10 +386,6 @@ export const siteContents = pgTable(
   (t) => [uniqueIndex("site_content_site_kind_idx").on(t.siteId, t.kind)],
 );
 
-/* ------------------------------------------------------------------ *
- * M4 Domains (T10)
- * ------------------------------------------------------------------ */
-
 export const domains = pgTable(
   "domain",
   {
@@ -457,10 +416,6 @@ export const domains = pgTable(
   ],
 );
 
-/* ------------------------------------------------------------------ *
- * M5 Component registry — catalog metadata only; the code is the truth.
- * ------------------------------------------------------------------ */
-
 export const components = pgTable(
   "component",
   {
@@ -478,10 +433,6 @@ export const components = pgTable(
   },
   (t) => [uniqueIndex("component_alias_idx").on(t.alias), index("component_group_idx").on(t.group)],
 );
-
-/* ------------------------------------------------------------------ *
- * M6 Pages (T13) and versions (T14)
- * ------------------------------------------------------------------ */
 
 export const pages = pgTable(
   "page",
@@ -541,10 +492,6 @@ export const pageVersions = pgTable(
   ],
 );
 
-/* ------------------------------------------------------------------ *
- * M7 Templates (T15)
- * ------------------------------------------------------------------ */
-
 export const templates = pgTable(
   "template",
   {
@@ -564,10 +511,6 @@ export const templates = pgTable(
   },
   (t) => [index("template_scope_status_idx").on(t.scope, t.status)],
 );
-
-/* ------------------------------------------------------------------ *
- * M8 Media (T16)
- * ------------------------------------------------------------------ */
 
 export const mediaAssets = pgTable(
   "media_asset",
@@ -601,10 +544,6 @@ export const mediaAssets = pgTable(
   ],
 );
 
-/* ------------------------------------------------------------------ *
- * M9 Importer (T17)
- * ------------------------------------------------------------------ */
-
 export const importJobs = pgTable(
   "import_job",
   {
@@ -627,10 +566,6 @@ export const importJobs = pgTable(
   },
   (t) => [index("import_site_status_idx").on(t.siteId, t.status), index("import_creator_idx").on(t.createdBy)],
 );
-
-/* ------------------------------------------------------------------ *
- * M11 Platform operations (T18, T19) and the queue
- * ------------------------------------------------------------------ */
 
 export const platformSettings = pgTable("platform_setting", {
   key: text("key").primaryKey(),
@@ -661,10 +596,6 @@ export const auditLog = pgTable(
   ],
 );
 
-/**
- * The queue. `job` is the pg-boss pattern in miniature: at-least-once
- * delivery, exponential backoff with jitter, dead-letter after the cap.
- */
 export const jobs = pgTable(
   "job",
   {

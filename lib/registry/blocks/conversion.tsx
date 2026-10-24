@@ -3,8 +3,6 @@ import { ButtonLink, Eyebrow, Glyph, MediaImage, Section, Stars } from "../shell
 import type { BlockDefinition } from "../types";
 import { LiveCountdown } from "@/components/blocks/live-countdown";
 
-/* --------------------------------- hero --------------------------------- */
-
 export const hero: BlockDefinition<{
   eyebrow: string;
   title: string;
@@ -210,8 +208,6 @@ export const hero: BlockDefinition<{
   },
 };
 
-/* ------------------------------ cta button ------------------------------ */
-
 export const ctaButton: BlockDefinition<{
   link: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
   note: string;
@@ -291,8 +287,6 @@ export const ctaButton: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------- cta banner ------------------------------- */
 
 export const ctaBanner: BlockDefinition<{
   title: string;
@@ -383,8 +377,6 @@ export const ctaBanner: BlockDefinition<{
   ),
 };
 
-/* ------------------------------- countdown ------------------------------- */
-
 export const countdown: BlockDefinition<{
   title: string;
   targetDate: string;
@@ -465,8 +457,6 @@ export const countdown: BlockDefinition<{
     </Section>
   ),
 };
-
-/* ------------------------------ promo banner ------------------------------ */
 
 export const promoBanner: BlockDefinition<{
   headline: string;

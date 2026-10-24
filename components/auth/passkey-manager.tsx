@@ -71,7 +71,6 @@ export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
           ))
         )}
       </ul>
-
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-[180px] flex-1">
           <label className="label" htmlFor="passkey-name">

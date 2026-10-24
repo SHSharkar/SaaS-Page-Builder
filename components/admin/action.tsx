@@ -21,7 +21,6 @@ export function Notice({ state, className = "" }: { state: ActionResult | null; 
   );
 }
 
-/** Fire a server action from a button, reporting the returned state inline. */
 export function ActionButton({
   action,
   payload,
@@ -64,7 +63,6 @@ export function ActionButton({
   );
 }
 
-/** A plain form posting to a server action that returns ActionResult. */
 export function ActionForm({
   action,
   children,
@@ -99,7 +97,6 @@ export function ActionForm({
   );
 }
 
-/** Copy a value (invite links, DNS targets) without pulling in a library. */
 export function CopyInline({ value, label = "Copy" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (

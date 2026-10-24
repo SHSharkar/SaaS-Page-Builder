@@ -57,7 +57,6 @@ export function PricingPlans({
           ))}
         </div>
       </div>
-
       <div className="grid gap-4 md:grid-cols-3">
         {plans.map((plan, index) => {
           const featured = plan.featured === "yes";

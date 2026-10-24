@@ -5,12 +5,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import path from "node:path";
 import * as schema from "./schema";
 
-/**
- * PostgreSQL, embedded. PGlite is real PostgreSQL compiled to WASM, so the
- * schema, the SQL, and the JSONB behaviour are the production ones; only the
- * transport differs. Point DATABASE_URL at a server and the same Drizzle
- * schema moves across unchanged (see README).
- */
 type Db = PgliteDatabase<typeof schema>;
 
 type Globals = {
@@ -36,14 +30,6 @@ function isRunning(pid: number): boolean {
   }
 }
 
-/**
- * PGlite keeps a `postmaster.pid` inside its data directory. A process that is
- * killed without closing the database leaves that file behind, and the next
- * start aborts instead of recovering. We therefore record our own pid: if the
- * previous owner is gone, both files are stale and are cleared before opening;
- * if it is still alive we refuse, because two writers on one directory is
- * exactly what the lock is for.
- */
 function clearStaleLock(): void {
   if (existsSync(lockPath)) {
     const previous = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
@@ -55,12 +41,10 @@ function clearStaleLock(): void {
     }
     rmSync(lockPath, { force: true });
   }
-  // No recorded owner (or a dead one): any postmaster.pid left in the tree is
-  // debris from an unclean exit and would abort this start.
+
   rmSync(pidPath, { force: true });
 }
 
-/** A clean exit flushes PGlite's WAL; without it the data dir can be left mid-write. */
 function hookShutdown(): void {
   if (g.__trofeoShutdownHooked) return;
   g.__trofeoShutdownHooked = true;
@@ -71,7 +55,7 @@ function hookShutdown(): void {
     try {
       await g.__trofeoClient?.close();
     } catch {
-      /* the process is going away either way */
+
     }
     rmSync(lockPath, { force: true });
     process.exit(code);
@@ -91,23 +75,17 @@ function open(): Db {
   return instance;
 }
 
-/** Forgets the current handle so the next touch opens the directory again. */
 async function discard(): Promise<void> {
   try {
     await g.__trofeoClient?.close();
   } catch {
-    /* already gone */
+
   }
   g.__trofeoDb = undefined;
   g.__trofeoClient = undefined;
   rmSync(lockPath, { force: true });
 }
 
-/**
- * `db` is a thin proxy rather than a captured handle so a wedged database can
- * be replaced without the hundred modules that import it caring. Everything
- * else in the app talks to this object exactly as before.
- */
 export const db: Db = new Proxy({} as Db, {
   get(_target, property) {
     if (!g.__trofeoDb) g.__trofeoDb = open();
@@ -126,12 +104,6 @@ function looksCorrupt(error: unknown): boolean {
   return /Aborted\(\)|database is starting up|could not open file|invalid checkpoint/i.test(message);
 }
 
-/**
- * Moves an unreadable directory aside so the next start is clean, and says so
- * loudly. The alternative — a dev server that refuses to boot every time it was
- * killed mid-write — is worse for a demo build whose data is reproducible from
- * the seed.
- */
 function quarantine(): string {
   const aside = `${dataDir}.unreadable-${Date.now()}`;
   try {
@@ -153,14 +125,8 @@ async function migrateAndSeed(): Promise<void> {
   }
 }
 
-/**
- * Runs the shipped migrations once per process, then the seed on an empty
- * database. Migrations are their own step in production (`npm run db:migrate`);
- * in this single-process build they run on first touch so a fresh checkout
- * boots into a working product.
- */
 export function ensureDb(): Promise<void> {
-  // The seed runs inside the ready promise; its own writes must not wait on it.
+
   if (g.__trofeoSeeding) return Promise.resolve();
   if (!g.__trofeoReady) {
     g.__trofeoReady = (async () => {

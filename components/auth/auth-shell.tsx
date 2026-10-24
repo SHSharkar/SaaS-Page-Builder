@@ -34,7 +34,6 @@ export function AuthShell({
               <p className="text-[11px] text-white/50">Internal page platform</p>
             </div>
           </div>
-
           <div className="max-w-md">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gold-400">
               One page, one truth
@@ -61,13 +60,11 @@ export function AuthShell({
               ))}
             </ul>
           </div>
-
           <p className="text-[11px] text-white/40">
             Stage environment · every dependency open source · no subscriptions
           </p>
         </div>
       </div>
-
       <div className="flex items-center justify-center bg-white px-6 py-12">
         <div className="w-full max-w-[400px]">
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">

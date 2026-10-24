@@ -42,11 +42,9 @@ export default async function NewPagePage({
           { label: "New" },
         ]}
       />
-
       <form action={createPageAction} className="grid gap-5 lg:grid-cols-[1.2fr_1fr]">
         <input type="hidden" name="siteId" value={siteId} />
         {chosen ? <input type="hidden" name="templateId" value={chosen.id} /> : null}
-
         <div className="space-y-5">
           <Panel title="Page details">
             <div className="space-y-3">
@@ -66,7 +64,6 @@ export default async function NewPagePage({
               </Field>
             </div>
           </Panel>
-
           {chosen ? (
             <Panel
               title={`Template: ${chosen.name}`}
@@ -139,7 +136,6 @@ export default async function NewPagePage({
             </Panel>
           )}
         </div>
-
         <div className="space-y-4">
           <Panel title="What happens next">
             <ol className="space-y-2.5 text-[13px] text-slate-600">

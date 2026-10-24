@@ -1,10 +1,5 @@
 import type { PageDocument } from "@/lib/documents";
 
-/**
- * Puck addresses every node by `props.id`. Documents we import, seed or write
- * by hand may not carry one, so the editor primes the tree before handing it
- * over — otherwise Puck's layer tree cannot key the items.
- */
 export function withPuckIds(document: PageDocument): PageDocument {
   const id = () => globalThis.crypto.randomUUID();
   const ensure = (node: { type: string; props: Record<string, unknown> & { id?: string } }) => ({

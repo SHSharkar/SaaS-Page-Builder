@@ -44,7 +44,6 @@ export default async function SiteOverviewPage({ params }: { params: Promise<{ s
           href={`/admin/sites/${siteId}/domains`}
         />
       </div>
-
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <Panel
           title="Pages"
@@ -92,7 +91,6 @@ export default async function SiteOverviewPage({ params }: { params: Promise<{ s
             ) : null}
           </ul>
         </Panel>
-
         <div className="space-y-5">
           <Panel
             title="Live now"
@@ -127,7 +125,6 @@ export default async function SiteOverviewPage({ params }: { params: Promise<{ s
               </div>
             </dl>
           </Panel>
-
           <Panel title="Global content" description="Header, footer and default SEO are edited once per site.">
             <ul className="space-y-2">
               {kinds.map((kind) => {
@@ -159,7 +156,6 @@ export default async function SiteOverviewPage({ params }: { params: Promise<{ s
           </Panel>
         </div>
       </div>
-
       <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
         <Panel
           title="Hostnames"
@@ -186,7 +182,6 @@ export default async function SiteOverviewPage({ params }: { params: Promise<{ s
             {domains.length === 0 ? <li className="text-sm text-slate-500">No hostnames yet.</li> : null}
           </ul>
         </Panel>
-
         <Panel
           title="Activity"
           description="Append-only audit trail for this site."

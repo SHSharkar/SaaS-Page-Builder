@@ -106,7 +106,6 @@ export function SlideCarousel({
           ))}
         </div>
       </div>
-
       {count > 1 ? (
         <>
           <button

@@ -1,11 +1,4 @@
-/**
- * The single sweeper for every keep window in PRD 3.6.
- *
- * It is repeat-safe by construction: each step filters on the timestamp window
- * and on a status that the step itself moves, so running it twice changes
- * nothing the second time. The daily job calls it; the settings screen can run
- * one pass by hand.
- */
+
 import { and, eq, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { auditLog, domains, importJobs, mediaAssets, pages, sessions, sites, staffInvites } from "@/lib/db/schema";
@@ -34,25 +27,21 @@ export async function runDailyCleanup(actor: Actor | null): Promise<CleanupResul
   await ensureDb();
   const now = new Date();
 
-  // Sessions: expired rows carry no value and are personal data.
   const expiredSessions = await db
     .delete(sessions)
     .where(lt(sessions.expiresAt, now))
     .returning({ id: sessions.id });
 
-  // Invitations: the daily sweep is the backstop for read-time expiry.
   const expiredInvites = await db
     .update(staffInvites)
     .set({ status: "expired", updatedAt: now })
     .where(and(eq(staffInvites.status, "pending"), lte(staffInvites.expiresAt, now)))
     .returning({ id: staffInvites.id });
 
-  // Snapshots: fifty per page, newest first.
   const pageRows = await db.select({ id: pages.id }).from(pages);
   let versionsPruned = 0;
   for (const row of pageRows) versionsPruned += await pruneVersions(row.id, KEEP.versionsPerPage);
 
-  // Import jobs: ninety days. The page they produced is untouched.
   const oldJobs = await db
     .delete(importJobs)
     .where(
@@ -63,7 +52,6 @@ export async function runDailyCleanup(actor: Actor | null): Promise<CleanupResul
     )
     .returning({ id: importJobs.id, fileMediaId: importJobs.fileMediaId });
 
-  // Import files: a year, and only once nothing references them.
   const oldImportFiles = await db
     .select({ id: mediaAssets.id, storageKey: mediaAssets.storageKey })
     .from(mediaAssets)
@@ -90,17 +78,13 @@ export async function runDailyCleanup(actor: Actor | null): Promise<CleanupResul
     importFilesRemoved += 1;
   }
 
-  // Pending uploads that never confirmed.
   const pendingMediaRemoved = await sweepPendingMedia();
 
-  // Audit: two years. Everything newer stays append-only.
   const removedAudit = await db
     .delete(auditLog)
     .where(lt(auditLog.createdAt, monthsAgo(KEEP.auditMonths, now.getTime())))
     .returning({ id: auditLog.id });
 
-  // Deleted sites past the restore window: hard delete, which cascades pages,
-  // snapshots, content, media rows, imports and domains.
   const purgeable = await db
     .select({ id: sites.id, name: sites.name })
     .from(sites)
@@ -116,7 +100,6 @@ export async function runDailyCleanup(actor: Actor | null): Promise<CleanupResul
   }
   if (purgeable.length) cacheClear();
 
-  // Removed hostnames are forgotten after a quarter, which frees the name.
   const forgotten = await db
     .delete(domains)
     .where(
@@ -165,7 +148,6 @@ export async function runDailyCleanup(actor: Actor | null): Promise<CleanupResul
   return result;
 }
 
-/** Everything the sweeper would look at, counted without changing anything. */
 export async function cleanupPreview() {
   await ensureDb();
   const now = Date.now();

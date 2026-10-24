@@ -8,12 +8,6 @@ export type ResolvedMedia = {
   height?: number | null;
 };
 
-/**
- * Documents store media identifiers (ADR-004). The public renderer resolves
- * them from the database before rendering; the editor primes this lookup so
- * a freshly picked image previews instantly. URLs are never stored in a
- * document, which is what makes the reference check exact.
- */
 const lookup = new Map<string, ResolvedMedia>();
 
 export function primeMedia(items: ResolvedMedia[]): void {

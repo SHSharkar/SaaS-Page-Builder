@@ -14,8 +14,6 @@ const linkArray: FieldDef = {
   ],
 };
 
-/* ------------------------------- header ------------------------------- */
-
 type HeaderProps = {
   logoText: string;
   logo: { id: string } | null;
@@ -135,7 +133,6 @@ export const siteHeader: BlockDefinition<HeaderProps> = {
           )}
           <span className="font-heading text-lg font-semibold tracking-tight">{logoText}</span>
         </a>
-
         <nav className="hidden items-center gap-7 md:flex" aria-label="Main">
           {links.map((link, index) => (
             <a
@@ -147,7 +144,6 @@ export const siteHeader: BlockDefinition<HeaderProps> = {
             </a>
           ))}
         </nav>
-
         <div className="flex items-center gap-2">
           <a className="btn btn-solid hidden px-4 py-2 text-sm md:inline-flex" href={cta?.href || "#"}>
             {cta?.label || "Get started"}
@@ -189,8 +185,6 @@ export const siteHeader: BlockDefinition<HeaderProps> = {
     </header>
   ),
 };
-
-/* ------------------------------- footer ------------------------------- */
 
 type FooterColumn = { title: string; links: string };
 
@@ -320,7 +314,6 @@ export const siteFooter: BlockDefinition<{
             </div>
           ))}
         </div>
-
         <div
           className="mt-12 flex flex-col gap-4 border-t pt-6 text-xs md:flex-row md:items-center md:justify-between"
           style={{ borderColor: "var(--site-border)", color: "var(--site-muted)" }}
@@ -342,8 +335,6 @@ export const siteFooter: BlockDefinition<{
     </footer>
   ),
 };
-
-/* ---------------------------- sticky CTA dock ---------------------------- */
 
 export const stickyCtaDock: BlockDefinition<{
   message: string;
@@ -422,6 +413,5 @@ export const stickyCtaDock: BlockDefinition<{
 
 export const siteFrameBlocks = [siteHeader, siteFooter, stickyCtaDock];
 
-/* Unused-helper guard: Section is imported for future site-frame sections. */
 void Section;
 void linkArray;

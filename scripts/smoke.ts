@@ -1,12 +1,4 @@
-/**
- * End-to-end smoke test of the data layer against a throwaway database.
- *
- *   PGLITE_DIR=.cache/smoke MEDIA_DIR=data/smoke-media npx tsx scripts/smoke.ts
- *
- * It exercises the same functions the server actions call: create, save,
- * stale-save refusal, publish, rollback, media upload + reference check,
- * HTML import review, template application, domain verification and the queue.
- */
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, gte } from "drizzle-orm";
