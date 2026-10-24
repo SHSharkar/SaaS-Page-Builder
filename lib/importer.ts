@@ -1,828 +1,1038 @@
+import "server-only";
 import * as cheerio from "cheerio";
 import type { AnyNode, Element } from "domhandler";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { importJobs, type ImportJob } from "@/lib/db/schema";
-import type {
-  ImportMapping,
-  ImportReview,
-  ImportReviewDecision,
-  ImportSegment,
-  PageDocument,
+import {
+  importJobs,
+  type ImportJob,
+  type ImportReport,
+  type ImportSegment,
+} from "@/lib/db/schema";
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  newBlockId,
+  normalizePath,
+  sanitizeRichHtml,
+  type BlockNode,
+  type PageDocument,
+  type PageSeo,
 } from "@/lib/documents";
-import { DOCUMENT_SCHEMA_VERSION, DEFAULT_ROOT_PROPS } from "@/lib/documents";
-import { BLOCKS, validateDocument, defaultPropsFor } from "@/lib/registry";
+import { COMPONENT_LIST, defaultPropsFor } from "@/lib/registry";
+import { uploadMedia } from "@/lib/media";
+import { isSafeRemoteUrl, safeFetchBytes } from "@/lib/media/ssrf";
+import { createPage, savePageDraft } from "@/lib/pages";
+import { can } from "@/lib/auth/permissions";
 import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
-import { uploadMedia, sniffMime, MAX_IMAGE_BYTES } from "@/lib/media";
-import { createPage } from "@/lib/pages";
+import { consumeRateLimit } from "@/lib/cache";
 import { assertTransition } from "@/lib/lifecycle";
+import { getSettingNumber, getSettingSecret, getSettingString } from "@/lib/settings";
+import {
+  ForbiddenError,
+  NotFoundError,
+  RateLimitError,
+  ValidationError,
+} from "@/lib/errors";
 
-export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+export { isSafeRemoteUrl };
 
-type Loaded = cheerio.CheerioAPI;
+export const MAX_HTML_BYTES = 5 * 1024 * 1024;
+export const MAX_REMOTE_IMAGE_BYTES = 8 * 1024 * 1024;
 
-function clean(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
+export type AnalyzeOptions = {
+  fetchRemoteImages?: boolean;
+  siteId?: string;
+  actor?: Actor;
+};
 
-function isElement(node: AnyNode): node is Element {
-  return (node as Element).type === "tag";
-}
+type ParsedHead = {
+  title: string;
+  description: string;
+  ogTitle: string;
+  ogDescription: string;
+  canonical: string;
+  noindex: boolean;
+};
 
-function resolveUrl(raw: string | undefined, base?: string): string | null {
-  if (!raw) return null;
-  try {
-    const url = new URL(raw, base ?? "https://example.invalid");
-    if (!/^https?:$/.test(url.protocol)) return null;
-    if (!base) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-function collectButtons($: Loaded, el: cheerio.Cheerio<Element>) {
-  return el
-    .find("a")
-    .toArray()
-    .map((anchor) => {
-      const node = $(anchor);
-      const label = clean(node.text());
-      const className = node.attr("class") ?? "";
-      const looksLikeButton = /btn|button|cta/i.test(className);
-      if (!label || label.length > 48) return null;
-      if (!looksLikeButton && !node.attr("role")) return null;
-      return { label, href: node.attr("href") ?? "#" };
-    })
-    .filter((value): value is { label: string; href: string } => !!value);
-}
-
-function collectImages($: Loaded, el: cheerio.Cheerio<Element>) {
-  const urls: string[] = [];
-  el.find("img").each((_, img) => {
-    const src = $(img).attr("src") ?? $(img).attr("data-src");
-    if (src) urls.push(src);
-  });
-  el.find("[style]").each((_, node) => {
-    const style = $(node).attr("style") ?? "";
-    const match = /url\((['"]?)(.*?)\1\)/.exec(style);
-    if (match?.[2]) urls.push(match[2]);
-  });
-  return urls;
-}
-
-function repeatCount($: Loaded, el: cheerio.Cheerio<Element>): number {
-  const children = el.children().toArray().filter(isElement);
-  const signatures = new Map<string, number>();
-  for (const child of children) {
-    const signature = `${child.tagName}:${$(child).find("h2,h3,h4").length > 0}`;
-    signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
-  }
-  return Math.max(0, ...signatures.values());
-}
-
-function shapeOf($: Loaded, el: cheerio.Cheerio<Element>) {
+function parseHead($: cheerio.CheerioAPI): ParsedHead {
+  const meta = (name: string) =>
+    $(`meta[name="${name}"], meta[property="${name}"]`).attr("content")?.trim() ?? "";
+  const robots = meta("robots").toLowerCase();
   return {
-    tag: el.get(0)?.tagName ?? "div",
-    headings: el
-      .find("h1,h2,h3,h4")
-      .toArray()
-      .map((node) => clean($(node).text()))
-      .filter(Boolean),
-    paragraphs: el.find("p").length,
-    buttons: collectButtons($, el).length,
-    images: collectImages($, el).length,
-    repeatedChildren: repeatCount($, el),
+    title: $("title").first().text().trim() || $("h1").first().text().trim() || "Imported page",
+    description: meta("description"),
+    ogTitle: meta("og:title"),
+    ogDescription: meta("og:description"),
+    canonical: $('link[rel="canonical"]').attr("href")?.trim() ?? "",
+    noindex: robots.includes("noindex"),
   };
 }
 
-const PAYMENT_WORDS = /(visa|mastercard|paypal|skrill|neteller|bitcoin|crypto|apple pay|google pay)/i;
-const BONUS_WORDS = /(bonus|free spins|wagering|welcome offer|deposit)/i;
-const TRUST_WORDS = /(18\+|licensed|licence|licensed and regulated|responsible|gamble aware|rg)/i;
-const PRICING_WORDS = /(\$\d|€\d|£\d)\s*(\/|per\s*)?(mo|month|year|yr)?/i;
-
-function priceFrom(text: string): string {
-  const match = /([$€£]\s?\d[\d,.]*)/.exec(text);
-  return match ? match[1] : "";
+function stripNoise($: cheerio.CheerioAPI): { strippedCount: number; warnings: string[] } {
+  let stripped = 0;
+  const warnings: string[] = [];
+  const scripts = $("script").length;
+  if (scripts > 0) {
+    warnings.push(
+      `Removed ${scripts} <script> element${scripts === 1 ? "" : "s"} for visitor safety.`,
+    );
+    stripped += scripts;
+  }
+  const iframes = $("iframe");
+  let removedFrames = 0;
+  iframes.each((_, el) => {
+    const src = ($(el).attr("src") ?? "").trim();
+    const isVideo = /youtube\.com|youtu\.be|vimeo\.com/i.test(src);
+    if (!isVideo) {
+      $(el).remove();
+      removedFrames += 1;
+    }
+  });
+  if (removedFrames > 0) {
+    warnings.push(
+      `Stripped ${removedFrames} third-party <iframe> element${removedFrames === 1 ? "" : "s"} (YouTube and Vimeo embeds are kept).`,
+    );
+    stripped += removedFrames;
+  }
+  const other = $("script, noscript, style, link, meta, object, embed, form, input, button[type='submit']");
+  stripped += other.length;
+  other.remove();
+  $("*").each((_, el) => {
+    if (el.type !== "tag") return;
+    for (const attr of Object.keys(el.attribs ?? {})) {
+      if (attr.toLowerCase().startsWith("on")) delete el.attribs[attr];
+    }
+  });
+  return { strippedCount: stripped, warnings };
 }
 
-function ratingFrom(text: string): number {
-  const match = /(\d(?:\.\d)?)\s*(?:\/\s*5|out of 5|stars?)/i.exec(text);
-  if (match) return Math.min(5, Number(match[1]));
-  return 0;
+function topLevelRegions($: cheerio.CheerioAPI): Element[] {
+  const root = $("body").length ? $("body") : $.root();
+  const candidates: Element[] = [];
+  const pushChildren = (container: cheerio.Cheerio<AnyNode>) => {
+    container.children().each((_, child) => {
+      if (child.type !== "tag") return;
+      const tag = child.tagName.toLowerCase();
+      if (tag === "main" || tag === "div" && $(child).children("section, header, footer, article").length >= 2) {
+        pushChildren($(child));
+      } else {
+        candidates.push(child);
+      }
+    });
+  };
+  pushChildren(root);
+  return candidates.filter((el) => $(el).text().trim().length > 0 || $(el).find("img, iframe").length > 0);
+}
+
+function textOf($: cheerio.CheerioAPI, el: AnyNode): string {
+  return $(el).text().replace(/\s+/g, " ").trim();
+}
+
+function firstLink($: cheerio.CheerioAPI, scope: cheerio.Cheerio<AnyNode>): { label: string; href: string } | null {
+  const btn = scope
+    .find("a[href]")
+    .filter((_, a) => {
+      const cls = ($(a).attr("class") ?? "").toLowerCase();
+      return /btn|button|cta|claim|play|join|bonus|start/.test(cls) || $(a).text().trim().length <= 36;
+    })
+    .first();
+  const pick = btn.length ? btn : scope.find("a[href]").first();
+  if (!pick.length) return null;
+  const label = pick.text().replace(/\s+/g, " ").trim();
+  const href = pick.attr("href")?.trim() ?? "#";
+  return label ? { label: label.slice(0, 48), href } : null;
 }
 
 type Classification = {
-  alias: string;
+  type: string | null;
   confidence: number;
+  label: string;
   props: Record<string, unknown>;
-  reason: string;
+  imageSources: { propPath: string[]; src: string; alt: string }[];
 };
 
-function classify($: Loaded, el: cheerio.Cheerio<Element>, index: number, isLast: boolean): Classification | null {
-  const shape = shapeOf($, el);
-  const text = clean(el.text());
-  const heading = shape.headings[0] ?? "";
-  const buttons = collectButtons($, el);
-  const images = collectImages($, el);
-  const button = buttons[0];
+function classifyRegion($: cheerio.CheerioAPI, el: Element, index: number): Classification {
+  const $el = $(el);
+  const tag = el.tagName.toLowerCase();
+  const classes = `${$el.attr("id") ?? ""} ${$el.attr("class") ?? ""}`.toLowerCase();
+  const h1 = $el.find("h1").first().text().trim();
+  const h2 = $el.find("h2").first().text().trim();
+  const heading = h1 || h2 || $el.find("h3").first().text().trim();
+  const fullText = textOf($, el);
 
-  if (shape.repeatedChildren >= 3 && el.find("h2,h3,h4").length >= 3 && el.find("p").length >= 3) {
-    if (PRICING_WORDS.test(text) && /plan|pricing|tier/i.test(text + heading)) {
-      const plans = el
-        .children()
-        .toArray()
-        .filter(isElement)
-        .map((node) => {
-          const card = $(node);
-          return {
-            name: clean(card.find("h2,h3,h4").first().text()),
-            monthlyPrice: priceFrom(clean(card.text())),
-            yearlyPrice: priceFrom(clean(card.text())),
-            period: "/month",
-            features: card
-              .find("li")
-              .toArray()
-              .map((li) => clean($(li).text()))
-              .join("\n"),
-            ctaLabel: clean(card.find("a").first().text()) || "Choose plan",
-            ctaHref: card.find("a").first().attr("href") ?? "#",
-            featured: "no",
-          };
-        })
-        .filter((plan) => plan.name);
-      return {
-        alias: "pricing-table",
-        confidence: 0.62,
-        props: { ...defaultPropsFor("pricing-table"), title: heading, plans },
-        reason: "Repeated cards with prices and feature lists.",
-      };
-    }
-
-    const cards = el
-      .children()
-      .toArray()
-      .filter(isElement)
-      .slice(0, 4)
-      .map((node) => {
-        const card = $(node);
-        return {
-          image: images[0] ? { id: images[0] } : null,
-          icon: "spark",
-          title: clean(card.find("h2,h3,h4").first().text()),
-          text: clean(card.find("p").first().text()),
-          ctaLabel: clean(card.find("a").first().text()),
-          ctaHref: card.find("a").first().attr("href") ?? "",
-        };
-      })
-      .filter((card) => card.title);
-    if (cards.length >= 3) {
-      return {
-        alias: "cards-grid",
-        confidence: 0.7,
-        props: {
-          ...defaultPropsFor("cards-grid"),
-          title: heading,
-          columns: cards.length >= 4 ? "4" : "3",
-          cards,
-        },
-        reason: `${cards.length} repeated cards with a heading and text.`,
-      };
-    }
-  }
-
-  if (el.find("details").length >= 2 || (shape.repeatedChildren >= 2 && /\?$/.test(shape.headings.join(" ")))) {
-    const items = el
-      .find("details")
-      .toArray()
-      .map((node) => ({
-        question: clean($(node).find("summary").text()),
-        answer: clean($(node).find("p").last().text()),
-      }))
-      .filter((item) => item.question);
-    if (items.length >= 2) {
-      return {
-        alias: "faq",
-        confidence: 0.85,
-        props: { ...defaultPropsFor("faq"), title: heading || "Frequently asked", items },
-        reason: "Question and answer pairs.",
-      };
-    }
-  }
-
-  if (el.find("table").length && el.find("tr").length >= 3) {
-    const headerCells = el.find("tr").first().find("th,td").toArray().map((cell) => clean($(cell).text()));
-    const rows = el
-      .find("tr")
-      .toArray()
-      .slice(1)
-      .map((tr) => {
-        const cells = $(tr).find("td").toArray().map((cell) => clean($(cell).text()));
-        return {
-          casino: cells[0] ?? "",
-          bonus: cells[1] ?? "",
-          highlights: cells[2] ?? "",
-          rating: ratingFrom(cells.join(" ")),
-          ctaLabel: clean($(tr).find("a").first().text()) || "Claim",
-          ctaHref: $(tr).find("a").first().attr("href") ?? "#",
-          highlight: "no",
-        };
-      })
-      .filter((row) => row.casino);
+  if (tag === "header" || (tag === "nav" && index === 0)) {
+    const links: { label: string; href: string }[] = [];
+    $el.find("a[href]").each((_, a) => {
+      const label = $(a).text().replace(/\s+/g, " ").trim();
+      const href = $(a).attr("href")?.trim() ?? "#";
+      if (label && links.length < 7) links.push({ label: label.slice(0, 32), href });
+    });
+    const brand =
+      $el.find("[class*='logo'], [class*='brand'], strong").first().text().trim() ||
+      links[0]?.label ||
+      "Brand";
+    const cta = links.length > 3 ? links.pop() : undefined;
     return {
-      alias: "casino-compare-table",
-      confidence: 0.8,
+      type: "site-header",
+      confidence: 0.92,
+      label: `Site header (${links.length} links)`,
       props: {
-        ...defaultPropsFor("casino-compare-table"),
-        title: heading || "Compare",
-        columns: headerCells.length >= 3 ? headerCells : ["Casino", "Welcome bonus", "Highlights", "Rating"],
-        rows,
+        ...defaultPropsFor("site-header"),
+        brandName: brand.slice(0, 32),
+        links,
+        ...(cta ? { ctaLabel: cta.label, ctaHref: cta.href } : {}),
       },
-      reason: "A data table with three or more rows.",
+      imageSources: [],
     };
   }
 
-  if (shape.headings.length >= 2 && shape.paragraphs >= 3 && PRICING_WORDS.test(text)) {
+  if (tag === "footer") {
+    const legal = $el.find("small, p").last().text().replace(/\s+/g, " ").trim();
+    const links: { label: string; href: string }[] = [];
+    $el.find("a[href]").each((_, a) => {
+      const label = $(a).text().replace(/\s+/g, " ").trim();
+      const href = $(a).attr("href")?.trim() ?? "#";
+      if (label && links.length < 8) links.push({ label: label.slice(0, 36), href });
+    });
     return {
-      alias: "pricing-table",
-      confidence: 0.4,
-      props: { ...defaultPropsFor("pricing-table"), title: heading },
-      reason: "Prices found, but the card structure was ambiguous.",
-    };
-  }
-
-  if (shape.repeatedChildren >= 3 && el.find("ol, ul").length && shape.paragraphs >= 2 && !button) {
-    const items = el
-      .find("li")
-      .toArray()
-      .slice(0, 8)
-      .map((li) => {
-        const label = clean($(li).find("h2,h3,h4,strong").first().text()) || clean($(li).text()).slice(0, 60);
-        const rest = clean($(li).text()).replace(label, "").trim();
-        return { title: label, text: rest.slice(0, 160) };
-      })
-      .filter((item) => item.title);
-    if (items.length >= 3) {
-      return {
-        alias: "steps",
-        confidence: 0.66,
-        props: { ...defaultPropsFor("steps"), title: heading || "How it works", items },
-        reason: "An ordered list of three or more steps.",
-      };
-    }
-  }
-
-  if (BONUS_WORDS.test(text) && /(100%|up to|free spins)/i.test(text) && shape.headings.length <= 2) {
-    const terms = /(\d+x\s*wagering[^.]*)/i.exec(text)?.[1] ?? "";
-    return {
-      alias: "bonus-card",
-      confidence: 0.58,
+      type: "site-footer",
+      confidence: 0.9,
+      label: "Site footer",
       props: {
-        ...defaultPropsFor("bonus-card"),
-        headline: heading || /(100%\s*up to\s*[$€£]?\d+)/i.exec(text)?.[1] || "Welcome bonus",
-        subline: clean(el.find("p").first().text()).slice(0, 140),
-        terms: terms || "Terms apply. 18+.",
-        cta: button ? { label: button.label, href: button.href, style: "solid" } : undefined,
-        rating: ratingFrom(text),
+        ...defaultPropsFor("site-footer"),
+        columns: links.length ? [{ heading: "Links", links }] : defaultPropsFor("site-footer").columns,
+        ...(legal ? { legalNote: legal.slice(0, 360) } : {}),
       },
-      reason: "Bonus wording with wagering terms.",
+      imageSources: [],
     };
   }
 
-  if (PAYMENT_WORDS.test(text) && text.length < 400) {
-    const methods = [...text.matchAll(new RegExp(PAYMENT_WORDS.source, "gi"))]
-      .map((match) => match[1])
-      .filter((value, i, all) => all.indexOf(value) === i);
+  if (h1 || (index <= 1 && /hero|banner|jumbotron|masthead/.test(classes))) {
+    const paragraphs = $el
+      .find("p")
+      .map((_, p) => textOf($, p))
+      .get()
+      .filter((t) => t.length > 12);
+    const cta = firstLink($, $el);
+    const img = $el.find("img[src]").first();
+    const imgSrc = img.attr("src")?.trim();
     return {
-      alias: "payment-strip",
-      confidence: 0.6,
-      props: { ...defaultPropsFor("payment-strip"), methods },
-      reason: "Payment method names in a short strip.",
-    };
-  }
-
-  if (TRUST_WORDS.test(text) && text.length < 600 && shape.headings.length <= 2) {
-    return {
-      alias: "trust-strip",
-      confidence: 0.5,
-      props: { ...defaultPropsFor("trust-strip"), text: text.slice(0, 200) },
-      reason: "Licence and responsible-play wording.",
-    };
-  }
-
-  if (el.find("iframe").length || /youtube\.com|youtu\.be|vimeo\.com/.test(text)) {
-    const html = $.html(el);
-    const id =
-      /youtube(?:-nocookie)?\.com\/embed\/([\w-]+)/.exec(html)?.[1] ??
-      /youtu\.be\/([\w-]+)/.exec(html)?.[1] ??
-      /vimeo\.com\/(\d+)/.exec(html)?.[1] ??
-      "";
-    return {
-      alias: "video-embed",
-      confidence: 0.75,
-      props: {
-        ...defaultPropsFor("video-embed"),
-        provider: /vimeo/.test(html) ? "vimeo" : "youtube",
-        videoId: id,
-        title: heading || "Video",
-      },
-      reason: "An embedded video player.",
-    };
-  }
-
-  if (index === 0 && (el.find("h1").length > 0 || shape.headings.length > 0) && button) {
-    return {
-      alias: "hero",
-      confidence: 0.72,
+      type: "hero",
+      confidence: h1 ? 0.93 : 0.78,
+      label: `Hero: "${(h1 || heading || "Headline").slice(0, 44)}"`,
       props: {
         ...defaultPropsFor("hero"),
-        eyebrow: "",
-        title: clean(el.find("h1").first().text()) || heading,
-        subtitle: clean(el.find("p").first().text()).slice(0, 240),
-        primary: { label: button.label, href: button.href, style: "solid" },
-        secondary: buttons[1]
-          ? { label: buttons[1].label, href: buttons[1].href, style: "outline" }
-          : { label: "", href: "", style: "outline" },
-        background: images[0] ? { id: images[0] } : null,
+        eyebrow: $el.find("[class*='eyebrow'], [class*='kicker'], [class*='badge']").first().text().trim().slice(0, 48) || "Featured offer",
+        headline: (h1 || heading || "Welcome").slice(0, 140),
+        subheadline: (paragraphs[0] ?? "").slice(0, 280),
+        primaryLabel: cta?.label ?? "Get Started",
+        primaryHref: cta?.href ?? "#offer",
+        secondaryLabel: "",
+        layout: imgSrc ? "split" : "centered",
       },
-      reason: "First section with the page headline and a button.",
+      imageSources: imgSrc
+        ? [{ propPath: ["media"], src: imgSrc, alt: img.attr("alt")?.trim() ?? "" }]
+        : [],
     };
   }
 
-  if (isLast && heading && button) {
+  const detailsEls = $el.find("details");
+  if (detailsEls.length >= 2 || /faq|accordion|questions/.test(classes)) {
+    const items: { question: string; answer: string }[] = [];
+    if (detailsEls.length >= 2) {
+      detailsEls.each((_, d) => {
+        const q = $(d).find("summary").first().text().replace(/\s+/g, " ").trim();
+        const clone = $(d).clone();
+        clone.find("summary").remove();
+        const a = clone.text().replace(/\s+/g, " ").trim();
+        if (q && a) items.push({ question: q.slice(0, 160), answer: a.slice(0, 600) });
+      });
+    } else {
+      $el.find("h3, h4, dt").each((_, qEl) => {
+        const q = textOf($, qEl);
+        const next = $(qEl).next("p, dd, div");
+        const a = textOf($, next[0]);
+        if (q && a && items.length < 12) items.push({ question: q.slice(0, 160), answer: a.slice(0, 600) });
+      });
+    }
+    if (items.length >= 2) {
+      return {
+        type: "faq",
+        confidence: 0.9,
+        label: `FAQ (${items.length} questions)`,
+        props: { ...defaultPropsFor("faq"), heading: heading || "Frequently asked questions", items },
+        imageSources: [],
+      };
+    }
+  }
+
+  const table = $el.find("table").first();
+  if (table.length || /toplists?|compare|operator|casinos?-list|ranking/.test(classes)) {
+    const rows: Record<string, unknown>[] = [];
+    table.find("tbody tr, tr").each((idx, tr) => {
+      const cells = $(tr)
+        .find("td")
+        .map((_, td) => textOf($, td))
+        .get();
+      if (cells.length >= 2 && rows.length < 10) {
+        const link = $(tr).find("a[href]").last();
+        rows.push({
+          rank: rows.length + 1,
+          brand: (cells[0] || `Brand ${idx + 1}`).slice(0, 48),
+          bonus: (cells[1] || "Welcome offer").slice(0, 80),
+          rating: cells[2] && /\d/.test(cells[2]) ? cells[2].slice(0, 12) : "9.5/10",
+          payoutSpeed: cells[3]?.slice(0, 24) ?? "Fast",
+          license: "Licensed",
+          ctaLabel: link.text().trim().slice(0, 24) || "Visit",
+          ctaHref: link.attr("href")?.trim() ?? "#",
+          terms: "18+ | T&Cs apply.",
+        });
+      }
+    });
+    if (rows.length >= 1) {
+      return {
+        type: "casino-compare-table",
+        confidence: 0.88,
+        label: `Comparison table (${rows.length} rows)`,
+        props: {
+          ...defaultPropsFor("casino-compare-table"),
+          heading: heading || "Top rated options",
+          rows,
+        },
+        imageSources: [],
+      };
+    }
+  }
+
+  if (/bonus|welcome-offer|deposit-match|free-spins/.test(classes) || /\b\d{2,3}%\s*(up to|bonus|match)/i.test(fullText)) {
+    const cta = firstLink($, $el);
+    const match = fullText.match(/(\d{2,3}%[^.!?\n]{0,40})/i);
+    const terms =
+      $el.find("small, [class*='term'], [class*='fine'], [class*='disclaim']").first().text().replace(/\s+/g, " ").trim() ||
+      "18+ | New customers only | T&Cs apply.";
     return {
-      alias: "cta-banner",
-      confidence: 0.55,
+      type: "bonus-card",
+      confidence: 0.82,
+      label: `Bonus offer: "${(match?.[1] ?? heading ?? "Offer").slice(0, 40)}"`,
       props: {
-        ...defaultPropsFor("cta-banner"),
-        title: heading,
-        text: clean(el.find("p").first().text()).slice(0, 200),
-        primary: { label: button.label, href: button.href, style: "solid" },
+        ...defaultPropsFor("bonus-card"),
+        brand: (heading || "Featured Offer").slice(0, 48),
+        headline: (match?.[1] ?? heading ?? "Welcome Bonus").slice(0, 72),
+        ctaLabel: cta?.label ?? "Claim Offer",
+        ctaHref: cta?.href ?? "#",
+        terms: terms.slice(0, 320),
       },
-      reason: "Closing section with a heading and a button.",
+      imageSources: [],
     };
   }
 
-  if (shape.images >= 2 && shape.headings.length === 0) {
+  if (/18\+|gambleaware|begambleaware|responsible\s*gaming|play\s*responsibly/i.test(fullText) && fullText.length < 700) {
     return {
-      alias: "carousel",
-      confidence: 0.45,
+      type: "responsible-gaming",
+      confidence: 0.91,
+      label: "Responsible gaming notice",
       props: {
-        ...defaultPropsFor("carousel"),
-        slides: images.slice(0, 5).map((image) => ({
-          image: { id: image },
-          title: "",
-          text: "",
-          ctaLabel: "",
-          ctaHref: "",
-        })),
+        ...defaultPropsFor("responsible-gaming"),
+        heading: heading || "Play responsibly",
+        message: fullText.slice(0, 420),
       },
-      reason: "Several images with no text, likely a gallery.",
+      imageSources: [],
     };
   }
 
-  if (shape.images === 1 && shape.headings.length === 0 && shape.paragraphs <= 1) {
+  if (/pricing|plans|tiers/.test(classes)) {
+    const planCards = $el.find("[class*='plan'], [class*='tier'], [class*='card'], article");
+    if (planCards.length >= 2) {
+      const plans: Record<string, unknown>[] = [];
+      planCards.slice(0, 4).each((idx, card) => {
+        const $c = $(card);
+        const name = $c.find("h3, h4, strong").first().text().trim() || `Plan ${idx + 1}`;
+        const priceMatch = textOf($, card).match(/([$\u20ac\u00a3]\s?\d[\d.,]*)/);
+        const feats = $c
+          .find("li")
+          .map((_, li) => textOf($, li))
+          .get()
+          .slice(0, 7)
+          .join("\n");
+        const cta = firstLink($, $c);
+        plans.push({
+          name: name.slice(0, 32),
+          price: priceMatch?.[1] ?? "$29",
+          annualPrice: priceMatch?.[1] ?? "$24",
+          period: "per month",
+          description: $c.find("p").first().text().trim().slice(0, 100),
+          features: feats || "Core features included",
+          ctaLabel: cta?.label ?? "Choose",
+          ctaHref: cta?.href ?? "#",
+          featured: idx === 1,
+        });
+      });
+      return {
+        type: "pricing-table",
+        confidence: 0.84,
+        label: `Pricing table (${plans.length} plans)`,
+        props: { ...defaultPropsFor("pricing-table"), heading: heading || "Plans", plans },
+        imageSources: [],
+      };
+    }
+  }
+
+  const ol = $el.find("ol").first();
+  if (ol.length && ol.find("li").length >= 2) {
+    const steps = ol
+      .find("li")
+      .map((_, li) => {
+        const strong = $(li).find("strong, h3, h4").first().text().trim();
+        const body = textOf($, li);
+        return {
+          title: (strong || body.slice(0, 42)).slice(0, 60),
+          body: body.slice(0, 220),
+        };
+      })
+      .get()
+      .slice(0, 6);
     return {
-      alias: "image",
-      confidence: 0.6,
+      type: "steps",
+      confidence: 0.85,
+      label: `Steps (${steps.length} items)`,
+      props: { ...defaultPropsFor("steps"), heading: heading || "How it works", steps },
+      imageSources: [],
+    };
+  }
+
+  const iframeSrc = $el.find("iframe[src]").first().attr("src")?.trim();
+  if (iframeSrc && /youtube\.com|youtu\.be|vimeo\.com/i.test(iframeSrc)) {
+    return {
+      type: "video-embed",
+      confidence: 0.9,
+      label: "Embedded video",
+      props: { ...defaultPropsFor("video-embed"), heading: heading || "", url: iframeSrc },
+      imageSources: [],
+    };
+  }
+
+  const blockCards = $el.find("article, [class*='card'], [class*='feature'], li").filter((_, c) => {
+    return $(c).find("h3, h4").length > 0 && $(c).find("p").length > 0;
+  });
+  if (blockCards.length >= 3) {
+    const items = blockCards
+      .slice(0, 6)
+      .map((_, c) => ({
+        icon: "sparkles",
+        title: $(c).find("h3, h4").first().text().replace(/\s+/g, " ").trim().slice(0, 64),
+        body: $(c).find("p").first().text().replace(/\s+/g, " ").trim().slice(0, 220),
+      }))
+      .get();
+    return {
+      type: "features-grid",
+      confidence: 0.78,
+      label: `Features grid (${items.length} items)`,
+      props: { ...defaultPropsFor("features-grid"), heading: heading || "Highlights", items },
+      imageSources: [],
+    };
+  }
+
+  const blockquote = $el.find("blockquote").first();
+  if (blockquote.length) {
+    return {
+      type: "testimonial-quote",
+      confidence: 0.86,
+      label: "Testimonial quote",
+      props: {
+        ...defaultPropsFor("testimonial-quote"),
+        quote: textOf($, blockquote[0]).slice(0, 320),
+        author: $el.find("cite, figcaption, strong").first().text().trim().slice(0, 48) || "Customer",
+        role: "",
+        rating: 5,
+      },
+      imageSources: [],
+    };
+  }
+
+  const imgs = $el.find("img[src]");
+  if (imgs.length === 1 && fullText.length < 180) {
+    const src = imgs.attr("src")?.trim() ?? "";
+    const alt = imgs.attr("alt")?.trim() ?? "";
+    return {
+      type: "image",
+      confidence: 0.85,
+      label: `Image${alt ? `: "${alt.slice(0, 36)}"` : ""}`,
       props: {
         ...defaultPropsFor("image"),
-        image: { id: images[0] },
-        alt: clean(el.find("img").first().attr("alt") ?? ""),
+        alt: alt || "Imported image",
+        caption: $el.find("figcaption").text().trim().slice(0, 140),
       },
-      reason: "A single image.",
+      imageSources: src ? [{ propPath: ["media"], src, alt }] : [],
     };
   }
 
-  if (heading || shape.paragraphs > 0) {
-    const body = el
-      .find("p")
-      .toArray()
-      .map((node) => clean($(node).text()))
-      .filter(Boolean)
-      .join("\n\n");
+  if (imgs.length >= 2) {
+    const imageSources: Classification["imageSources"] = [];
+    const slides = imgs
+      .slice(0, 6)
+      .map((idx, img) => {
+        const src = $(img).attr("src")?.trim() ?? "";
+        const alt = $(img).attr("alt")?.trim() ?? `Slide ${idx + 1}`;
+        if (src) imageSources.push({ propPath: ["slides", String(idx), "media"], src, alt });
+        return { caption: alt.slice(0, 80), href: "" };
+      })
+      .get();
     return {
-      alias: "rich-text",
-      confidence: 0.5,
-      props: {
-        ...defaultPropsFor("rich-text"),
-        heading,
-        body: body.slice(0, 1200) || text.slice(0, 800),
-      },
-      reason: "Headings and paragraphs without a stronger signature.",
+      type: "carousel",
+      confidence: 0.72,
+      label: `Image carousel (${slides.length} slides)`,
+      props: { ...defaultPropsFor("carousel"), heading: heading || "", slides },
+      imageSources,
     };
   }
 
-  return null;
-}
-
-function topLevelSections($: Loaded): cheerio.Cheerio<Element>[] {
-  const body = $("body");
-  const roots = body.children().toArray().filter(isElement);
-  const sections: Element[] = [];
-  for (const root of roots) {
-    const tag = (root as Element).tagName;
-    const hasMeaningfulText = clean($(root).text()).length > 30 || $(root).find("img").length > 0;
-    if (!hasMeaningfulText) continue;
-    if (["main", "div", "section", "article", "body"].includes(tag)) {
-      const children = $(root).children().toArray().filter(isElement);
-      if (children.length > 2) sections.push(...children);
-      else sections.push(root as Element);
-    } else {
-      sections.push(root as Element);
-    }
-  }
-  return sections.map((element) => $(element));
-}
-
-export function analyzeHtml(html: string): ImportMapping {
-  const $ = cheerio.load(html);
-  $("script, style, noscript, template").remove();
-
-  $("header, nav, footer").each((_, node) => {
-    $(node).remove();
-  });
-
-  const candidates = topLevelSections($).filter((el) => clean(el.text()).length > 0 || el.find("img").length > 0);
-
-  const palette = new Set<string>();
-  const rawHtml = $.html();
-  for (const match of rawHtml.matchAll(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi)) {
-    palette.add(match[0].toLowerCase());
-    if (palette.size >= 6) break;
+  const cta = firstLink($, $el);
+  if (cta && heading && fullText.length < 360) {
+    return {
+      type: "cta-banner",
+      confidence: 0.76,
+      label: `Call-to-action banner: "${heading.slice(0, 40)}"`,
+      props: {
+        ...defaultPropsFor("cta-banner"),
+        heading: heading.slice(0, 120),
+        body: $el.find("p").first().text().replace(/\s+/g, " ").trim().slice(0, 220),
+        buttonLabel: cta.label,
+        buttonHref: cta.href,
+      },
+      imageSources: [],
+    };
   }
 
-  const segments: ImportSegment[] = [];
-  const unmapped: ImportMapping["unmapped"] = [];
-
-  candidates.forEach((el, index) => {
-    const classification = classify($, el, index, index === candidates.length - 1);
-    const assetUrls = collectImages($, el);
-    const shape = shapeOf($, el);
-    const excerpt = clean(el.text()).slice(0, 220);
-
-    if (!classification || !BLOCKS[classification.alias]) {
-      unmapped.push({
-        index,
-        label: shape.headings[0] ?? `Section ${index + 1}`,
-        excerpt,
-        reason: "No signature matched with enough confidence.",
-      });
-      return;
-    }
-
-    segments.push({
-      id: `seg-${index + 1}`,
-      index,
-      label: shape.headings[0] ?? `Section ${index + 1}`,
-      excerpt,
-      shape,
-      proposedAlias: classification.alias,
-      confidence: Math.round(classification.confidence * 100) / 100,
-      props: classification.props,
-      assetUrls,
-      reason: classification.reason,
-    });
-  });
-
-  const title = clean($("title").first().text()) || shapeOf($, $("body")).headings[0] || "Imported page";
+  const innerHtml = sanitizeRichHtml($el.html() ?? "");
+  if (innerHtml && fullText.length >= 20) {
+    return {
+      type: "rich-text",
+      confidence: 0.62,
+      label: heading ? `Text section: "${heading.slice(0, 40)}"` : `Text section (${fullText.slice(0, 36)}...)`,
+      props: { ...defaultPropsFor("rich-text"), html: innerHtml },
+      imageSources: [],
+    };
+  }
 
   return {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    method: "deterministic",
-    segments,
-    unmapped,
-    palette: [...palette],
-    pageTitle: title.slice(0, 120),
-    counts: { sections: candidates.length, mapped: segments.length, unmapped: unmapped.length },
+    type: null,
+    confidence: 0.2,
+    label: `Unrecognized <${tag}> region`,
+    props: {},
+    imageSources: [],
   };
 }
 
-const PRIVATE_RANGES = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  /^fc00:/i,
-  /^fe80:/i,
-];
+async function classifyAmbiguousWithLlm(
+  segments: ImportSegment[],
+): Promise<void> {
+  const adapter = (
+    process.env.LLM_ADAPTER ??
+    (await getSettingString("importer.llm_adapter", "none"))
+  )
+    .trim()
+    .toLowerCase();
+  if (adapter === "none" || !adapter) return;
 
-export function isSafeRemoteUrl(raw: string): boolean {
-  let url: URL;
+  const ambiguous = segments.filter((s) => s.confidence < 0.6 || !s.suggestedType);
+  if (ambiguous.length === 0) return;
+
+  const baseUrl = (
+    process.env.LLM_BASE_URL ??
+    (await getSettingString("importer.llm_base_url", ""))
+  ).trim();
+  const apiKey = (
+    process.env.LLM_API_KEY ??
+    (await getSettingSecret("importer.llm_api_key")) ??
+    ""
+  ).trim();
+  const model = (
+    process.env.LLM_MODEL ??
+    (await getSettingString("importer.llm_model", "gpt-4o-mini"))
+  ).trim();
+
+  if (!baseUrl || !apiKey) return;
+
+  const allowedTypes = COMPONENT_LIST.filter((c) => !c.adminOnly).map((c) => c.type);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+
   try {
-    url = new URL(raw);
+    const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Classify each HTML excerpt into one of these component types: ${allowedTypes.join(", ")}. Respond with JSON {"items":[{"id":"...","suggestedType":"...","confidence":0.75}]}.`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify(
+              ambiguous.map((s) => ({
+                id: s.id,
+                tag: s.sourceTag,
+                excerpt: s.excerpt,
+              })),
+            ),
+          },
+        ],
+      }),
+    });
+    if (!response.ok) return;
+    const payload = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const content = payload.choices?.[0]?.message?.content;
+    if (!content) return;
+    const parsed = JSON.parse(content) as {
+      items?: { id?: string; suggestedType?: string; confidence?: number }[];
+    };
+    for (const item of parsed.items ?? []) {
+      if (!item.id || !item.suggestedType || !allowedTypes.includes(item.suggestedType)) {
+        continue;
+      }
+      const target = segments.find((s) => s.id === item.id);
+      if (!target) continue;
+      target.suggestedType = item.suggestedType;
+      target.confidence = Math.min(0.85, Math.max(0.5, Number(item.confidence ?? 0.7)));
+      target.decision = "accept";
+      target.props = {
+        ...defaultPropsFor(item.suggestedType),
+        ...(item.suggestedType === "rich-text" && target.rawHtml
+          ? { html: sanitizeRichHtml(target.rawHtml) }
+          : {}),
+      };
+    }
   } catch {
-    return false;
+    // Any LLM timeout or parse issue cleanly leaves deterministic results intact.
+  } finally {
+    clearTimeout(timer);
   }
-  if (!/^https?:$/.test(url.protocol)) return false;
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
-  if (PRIVATE_RANGES.some((pattern) => pattern.test(host))) return false;
-  return true;
 }
 
-async function fetchImage(url: string): Promise<Buffer | null> {
-  if (!isSafeRemoteUrl(url)) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: { accept: "image/*" },
-    });
-    if (!response.ok) return null;
-    const length = Number(response.headers.get("content-length") ?? 0);
-    if (length && length > MAX_IMAGE_BYTES) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > MAX_IMAGE_BYTES) return null;
-    const sniffed = sniffMime(buffer);
-    if (!sniffed?.mime.startsWith("image/")) return null;
-    return buffer;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
+function setAtPath(target: Record<string, unknown>, path: string[], value: unknown) {
+  let cursor: unknown = target;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const key = path[i];
+    if (Array.isArray(cursor)) cursor = cursor[Number(key)];
+    else if (cursor && typeof cursor === "object") cursor = (cursor as Record<string, unknown>)[key];
   }
+  const last = path[path.length - 1];
+  if (cursor && typeof cursor === "object" && !Array.isArray(cursor)) {
+    (cursor as Record<string, unknown>)[last] = value;
+  }
+}
+
+export async function analyzeHtml(
+  rawHtml: string,
+  options: AnalyzeOptions = {},
+): Promise<{
+  report: ImportReport;
+  seo: PageSeo;
+  title: string;
+}> {
+  const byteLen = Buffer.byteLength(rawHtml, "utf8");
+  if (byteLen === 0) throw new ValidationError("Upload or paste an HTML document first.");
+  if (byteLen > MAX_HTML_BYTES) {
+    throw new ValidationError(
+      `HTML imports are capped at 5 MB; this file is ${(byteLen / (1024 * 1024)).toFixed(1)} MB.`,
+    );
+  }
+
+  const $ = cheerio.load(rawHtml);
+  const head = parseHead($);
+  const { strippedCount, warnings } = stripNoise($);
+  const regions = topLevelRegions($);
+
+  const segments: ImportSegment[] = [];
+  let mapped = 0;
+  let unmapped = 0;
+  let imagesImported = 0;
+  let imagesSkipped = 0;
+
+  for (let i = 0; i < regions.length; i += 1) {
+    const el = regions[i];
+    const classified = classifyRegion($, el, i);
+    const excerpt = textOf($, el).slice(0, 180);
+    const rawSegmentHtml = $.html(el).slice(0, 24_000);
+    const props = structuredClone(classified.props);
+
+    for (const imgRef of classified.imageSources) {
+      if (imgRef.src.startsWith("data:image/")) {
+        const match = imgRef.src.match(/^data:(image\/[a-z+]+);base64,([a-z0-9+/=\s]+)$/i);
+        if (match && options.siteId && options.actor) {
+          const bytes = Buffer.from(match[2], "base64");
+          if (bytes.length <= MAX_REMOTE_IMAGE_BYTES) {
+            try {
+              const { asset } = await uploadMedia({
+                siteId: options.siteId,
+                filename: "inline-image",
+                mimeType: match[1].toLowerCase(),
+                bytes,
+                altText: imgRef.alt,
+                actor: options.actor,
+              });
+              setAtPath(props, imgRef.propPath, { id: asset.id, alt: imgRef.alt });
+              imagesImported += 1;
+              continue;
+            } catch {
+              imagesSkipped += 1;
+            }
+          }
+        }
+        imagesSkipped += 1;
+      } else if (
+        options.fetchRemoteImages &&
+        options.siteId &&
+        options.actor &&
+        isSafeRemoteUrl(imgRef.src)
+      ) {
+        const fetched = await safeFetchBytes(imgRef.src, MAX_REMOTE_IMAGE_BYTES);
+        if (fetched) {
+          try {
+            const urlObj = new URL(imgRef.src);
+            const filename = urlObj.pathname.split("/").pop() || "imported-image";
+            const { asset } = await uploadMedia({
+              siteId: options.siteId,
+              filename,
+              mimeType: "application/octet-stream",
+              bytes: fetched,
+              altText: imgRef.alt,
+              actor: options.actor,
+            });
+            setAtPath(props, imgRef.propPath, { id: asset.id, alt: imgRef.alt });
+            imagesImported += 1;
+          } catch {
+            imagesSkipped += 1;
+          }
+        } else {
+          imagesSkipped += 1;
+        }
+      } else {
+        imagesSkipped += 1;
+      }
+    }
+
+    if (classified.type) mapped += 1;
+    else unmapped += 1;
+
+    segments.push({
+      id: `seg-${i + 1}`,
+      index: i,
+      label: classified.label,
+      sourceTag: el.tagName.toLowerCase(),
+      excerpt,
+      rawHtml: rawSegmentHtml,
+      suggestedType: classified.type,
+      confidence: classified.confidence,
+      props,
+      decision: classified.type ? "accept" : "skip",
+    });
+  }
+
+  await classifyAmbiguousWithLlm(segments);
+
+  mapped = segments.filter((s) => Boolean(s.suggestedType)).length;
+  unmapped = segments.length - mapped;
+
+  if (imagesSkipped > 0 && !options.fetchRemoteImages) {
+    warnings.push(
+      `${imagesSkipped} external image reference${imagesSkipped === 1 ? "" : "s"} left as placeholders so you can pick replacements from the media library.`,
+    );
+  }
+
+  const seo: PageSeo = {
+    metaTitle: head.title.slice(0, 70),
+    metaDescription: head.description.slice(0, 170),
+    ogTitle: head.ogTitle.slice(0, 70) || undefined,
+    ogDescription: head.ogDescription.slice(0, 170) || undefined,
+    canonicalUrl: head.canonical || undefined,
+    noindex: head.noindex,
+  };
+
+  return {
+    title: head.title,
+    seo,
+    report: {
+      title: head.title,
+      mappedCount: mapped,
+      unmappedCount: unmapped,
+      strippedCount,
+      imagesImported,
+      imagesSkipped,
+      warnings,
+      segments,
+    },
+  };
 }
 
 export async function createImportJob(options: {
   siteId: string;
   filename: string;
-  bytes: Buffer;
+  html: string;
+  targetPageId?: string | null;
+  fetchRemoteImages?: boolean;
   actor: Actor;
 }): Promise<ImportJob> {
   await ensureDb();
-  if (options.bytes.length > MAX_IMPORT_BYTES) throw new Error("Import files are capped at 5 MB.");
-  const sniffed = sniffMime(options.bytes);
-  if (!sniffed || !["text/html", "image/svg+xml"].includes(sniffed.mime)) {
-    throw new Error("Upload a single HTML file (the bytes are inspected, not the file name).");
+  const maxPerDay = await getSettingNumber("limits.imports_per_day", 20);
+  const daily = await consumeRateLimit("import-daily", options.actor.user.id, maxPerDay, 86_400);
+  if (!daily.allowed) {
+    throw new RateLimitError(
+      `Import limit reached (${maxPerDay} HTML imports per day). Try again tomorrow.`,
+      daily.retryAfterSeconds,
+    );
   }
 
-  const { asset } = await uploadMedia({
+  const { asset: sourceAsset } = await uploadMedia({
     siteId: options.siteId,
-    bytes: options.bytes,
-    filename: options.filename,
+    filename: options.filename || "import.html",
+    mimeType: "text/html",
+    bytes: Buffer.from(options.html, "utf8"),
     actor: options.actor,
-    kind: "import_reference",
-    altText: `Imported source: ${options.filename}`,
+    kindOverride: "import_reference",
   });
 
-  const html = options.bytes.toString("utf8");
-  const mapping = analyzeHtml(html);
+  const { report } = await analyzeHtml(options.html, {
+    fetchRemoteImages: options.fetchRemoteImages,
+    siteId: options.siteId,
+    actor: options.actor,
+  });
 
-  const [queued] = await db
+  const [job] = await db
     .insert(importJobs)
     .values({
       siteId: options.siteId,
-      status: "uploaded",
-      sourceName: options.filename,
-      fileMediaId: asset.id,
+      targetPageId: options.targetPageId ?? null,
+      status: "review",
+      sourceFilename: options.filename || "pasted.html",
+      sourceMediaId: sourceAsset.id,
+      sourceSizeBytes: Buffer.byteLength(options.html, "utf8"),
+      extractedMeta: {
+        title: report.title,
+      },
+      report,
       createdBy: options.actor.user.id,
     })
     .returning();
 
   await recordAudit({
-    action: "import_uploaded",
-    summary: `Uploaded “${options.filename}” for analysis`,
+    action: "import_analyzed",
+    summary: `Analyzed "${job.sourceFilename}" (${report.mappedCount} mapped, ${report.unmappedCount} unmapped)`,
     siteId: options.siteId,
     actor: options.actor,
-    targetType: "import_job",
-    targetId: queued.id,
+    targetType: "import",
+    targetId: job.id,
   });
 
-  assertTransition("import", queued.status, "parsing");
-  await db
-    .update(importJobs)
-    .set({ status: "parsing", updatedAt: new Date() })
-    .where(eq(importJobs.id, queued.id));
-
-  try {
-    assertTransition("import", "parsing", "mapped");
-    const [mapped] = await db
-      .update(importJobs)
-      .set({ status: "mapped", mappingResult: mapping, updatedAt: new Date() })
-      .where(eq(importJobs.id, queued.id))
-      .returning();
-
-    assertTransition("import", mapped.status, "in_review");
-    const [job] = await db
-      .update(importJobs)
-      .set({ status: "in_review", updatedAt: new Date() })
-      .where(eq(importJobs.id, queued.id))
-      .returning();
-
-    await recordAudit({
-      action: "import_mapped",
-      summary: `Mapped “${options.filename}”: ${mapping.counts.mapped} of ${mapping.counts.sections} sections recognised`,
-      siteId: options.siteId,
-      actor: options.actor,
-      targetType: "import_job",
-      targetId: job.id,
-    });
-
-    return job;
-  } catch (error) {
-    await db
-      .update(importJobs)
-      .set({
-        status: "failed",
-        failureReason: error instanceof Error ? error.message : String(error),
-        updatedAt: new Date(),
-      })
-      .where(eq(importJobs.id, queued.id));
-    throw error;
-  }
+  return job;
 }
 
-export async function getImportJob(siteId: string, jobId: string): Promise<ImportJob | null> {
+export type SegmentDecisionInput = {
+  id: string;
+  decision: "accept" | "remap" | "skip" | "raw_html";
+  remapType?: string;
+};
+
+export async function applyImportJob(options: {
+  siteId: string;
+  jobId: string;
+  decisions: SegmentDecisionInput[];
+  pageTitle?: string;
+  pageSlug?: string;
+  actor: Actor;
+}): Promise<{ pageId: string; blockCount: number }> {
+  await ensureDb();
+  const [job] = await db
+    .select()
+    .from(importJobs)
+    .where(and(eq(importJobs.id, options.jobId), eq(importJobs.siteId, options.siteId)))
+    .limit(1);
+  if (!job || !job.report) throw new NotFoundError("Import session not found.");
+  assertTransition(
+    "import",
+    job.status,
+    "applied",
+    "This import session has already been applied or discarded.",
+  );
+
+  const decisionById = new Map(options.decisions.map((d) => [d.id, d]));
+  const validTypes = new Set(COMPONENT_LIST.map((c) => c.type));
+  const adminBlockTypes = new Set(
+    COMPONENT_LIST.filter((c) => c.adminOnly).map((c) => c.type),
+  );
+  const blocks: BlockNode[] = [];
+
+  for (const seg of job.report.segments) {
+    const decision = decisionById.get(seg.id);
+    const action = decision?.decision ?? seg.decision;
+    if (action === "skip") continue;
+
+    if (action === "raw_html") {
+      if (!can(options.actor, "catalog.admin_blocks")) {
+        throw new ForbiddenError(
+          "Only administrators can convert imported regions into raw HTML blocks.",
+        );
+      }
+      blocks.push({
+        type: "raw-html",
+        props: {
+          ...defaultPropsFor("raw-html"),
+          id: newBlockId("raw-html"),
+          title: seg.label.slice(0, 60),
+          html: seg.rawHtml || `<p>${seg.excerpt}</p>`,
+        },
+      });
+      continue;
+    }
+
+    const chosenType =
+      action === "remap" && decision?.remapType && validTypes.has(decision.remapType)
+        ? decision.remapType
+        : seg.suggestedType;
+
+    if (!chosenType || !validTypes.has(chosenType)) continue;
+
+    if (adminBlockTypes.has(chosenType) && !can(options.actor, "catalog.admin_blocks")) {
+      throw new ForbiddenError(
+        `Only administrators can place the "${chosenType}" block during import.`,
+      );
+    }
+
+    let props: Record<string, unknown>;
+    if (chosenType === seg.suggestedType) {
+      props = { ...defaultPropsFor(chosenType), ...seg.props };
+    } else if (chosenType === "rich-text") {
+      props = {
+        ...defaultPropsFor("rich-text"),
+        html: seg.rawHtml ? sanitizeRichHtml(seg.rawHtml) : `<p>${seg.excerpt}</p>`,
+      };
+    } else {
+      props = { ...defaultPropsFor(chosenType) };
+      if ("heading" in props && seg.label) props.heading = seg.label.slice(0, 80);
+      if ("headline" in props && seg.label) props.headline = seg.label.slice(0, 80);
+      if ("body" in props && seg.excerpt) props.body = seg.excerpt;
+    }
+
+    blocks.push({
+      type: chosenType,
+      props: { ...props, id: newBlockId(chosenType) },
+    });
+  }
+
+  const document: PageDocument = {
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
+    root: { props: {} },
+    content: blocks,
+  };
+
+  let pageId = job.targetPageId;
+  const title = (options.pageTitle || job.report.title || "Imported Page").trim();
+
+  if (pageId) {
+    const existing = await db.query.pages.findFirst({
+      where: (t, { eq: e }) => e(t.id, pageId!),
+    });
+    if (!existing) throw new NotFoundError("Target page no longer exists.");
+    await savePageDraft({
+      siteId: options.siteId,
+      pageId,
+      expectedLockVersion: existing.lockVersion,
+      title,
+      document,
+      actor: options.actor,
+    });
+  } else {
+    const slug = normalizePath(options.pageSlug || title);
+    const created = await createPage({
+      siteId: options.siteId,
+      title,
+      slug,
+      document,
+      seo: { metaTitle: title.slice(0, 70) },
+      actor: options.actor,
+    });
+    pageId = created.id;
+  }
+
+  await db
+    .update(importJobs)
+    .set({
+      status: "applied",
+      targetPageId: pageId,
+      appliedAt: new Date(),
+    })
+    .where(eq(importJobs.id, job.id));
+
+  await recordAudit({
+    action: "import_applied",
+    summary: `Imported ${blocks.length} editable blocks from "${job.sourceFilename}" into "${title}"`,
+    siteId: options.siteId,
+    actor: options.actor,
+    targetType: "page",
+    targetId: pageId,
+  });
+
+  return { pageId, blockCount: blocks.length };
+}
+
+export async function discardImportJob(
+  siteId: string,
+  jobId: string,
+  actor: Actor,
+): Promise<void> {
   await ensureDb();
   const [job] = await db
     .select()
     .from(importJobs)
     .where(and(eq(importJobs.id, jobId), eq(importJobs.siteId, siteId)))
     .limit(1);
-  return job ?? null;
-}
-
-export async function listImportJobs(siteId: string): Promise<ImportJob[]> {
-  await ensureDb();
-  return db.select().from(importJobs).where(eq(importJobs.siteId, siteId)).orderBy(importJobs.createdAt);
-}
-
-async function copySegmentAssets(
-  segment: ImportSegment,
-  siteId: string,
-  actor: Actor,
-): Promise<{ props: Record<string, unknown>; copied: number }> {
-  const props = structuredClone(segment.props);
-  let copied = 0;
-
-  const replaceInValue = async (value: unknown): Promise<unknown> => {
-    if (Array.isArray(value)) {
-      const out = [];
-      for (const item of value) out.push(await replaceInValue(item));
-      return out;
-    }
-    if (value && typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      if (typeof record.id === "string" && /^https?:\/\//.test(record.id)) {
-        const bytes = await fetchImage(record.id);
-        if (bytes) {
-          const { asset } = await uploadMedia({
-            siteId,
-            bytes,
-            filename: record.id.split("/").pop()?.split("?")[0] ?? "imported",
-            actor,
-            altText: typeof record.alt === "string" ? record.alt : undefined,
-            originalUrl: record.id,
-          });
-          copied += 1;
-          return { id: asset.id };
-        }
-        return null;
-      }
-      const out: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(record)) out[key] = await replaceInValue(item);
-      return out;
-    }
-    return value;
-  };
-
-  return { props: (await replaceInValue(props)) as Record<string, unknown>, copied };
-}
-
-export async function applyImportJob(options: {
-  siteId: string;
-  jobId: string;
-  decisions: ImportReviewDecision[];
-  title: string;
-  slug: string;
-  actor: Actor;
-}): Promise<{ pageId: string; copiedAssets: number }> {
-  await ensureDb();
-  const job = await getImportJob(options.siteId, options.jobId);
-  if (!job) throw new Error("Import job not found.");
-  if (job.status !== "in_review" && job.status !== "mapped") {
-    throw new Error("This import is not waiting for review.");
-  }
-  const mapping = job.mappingResult;
-  if (!mapping) throw new Error("This import has no mapping yet.");
-  assertTransition("import", job.status, "applied");
-
-  const content: PageDocument["content"] = [];
-  let copiedAssets = 0;
-
-  try {
-    for (const decision of options.decisions) {
-      if (decision.decision === "removed") continue;
-      const segment = mapping.segments.find((item) => item.id === decision.segmentId);
-      if (!segment) continue;
-      const alias = decision.alias && BLOCKS[decision.alias] ? decision.alias : segment.proposedAlias;
-      const definition = BLOCKS[alias];
-      if (!definition) continue;
-
-      const sourceProps = decision.props ?? segment.props;
-      const { props, copied } = await copySegmentAssets({ ...segment, props: sourceProps }, options.siteId, options.actor);
-      copiedAssets += copied;
-
-      const parsed = definition.schema.safeParse({ ...defaultPropsFor(alias), ...props });
-      if (!parsed.success) continue;
-      content.push({ type: alias, props: parsed.data as PageDocument["content"][number]["props"] });
-    }
-
-    if (!content.length) {
-      throw new Error("Nothing was kept in the review, so no page was created.");
-    }
-
-    const document: PageDocument = {
-      schemaVersion: DOCUMENT_SCHEMA_VERSION,
-      root: { props: { ...DEFAULT_ROOT_PROPS } },
-      content,
-    };
-    const validation = validateDocument(document);
-    if (!validation.ok) throw new Error(validation.errors.join(" "));
-
-    const page = await createPage({
-      siteId: options.siteId,
-      title: options.title || mapping.pageTitle,
-      slug: options.slug || mapping.pageTitle,
-      document: validation.document,
-      actor: options.actor,
-      source: "import",
-      seo: { canonicalMode: "self", noindex: false },
-    });
-
-    const review: ImportReview = {
-      decisions: options.decisions,
-      reviewerId: options.actor.user.id,
-      reviewerName: options.actor.user.name,
-      reviewedAt: new Date().toISOString(),
-    };
-
-    await db
-      .update(importJobs)
-      .set({
-        status: "applied",
-        reviewResult: review,
-        producedPageId: page.id,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(importJobs.id, job.id));
-
-    await recordAudit({
-      action: "import_applied",
-      summary: `Applied import “${job.sourceName}” as the draft “${page.title}”`,
-      siteId: options.siteId,
-      actor: options.actor,
-      targetType: "page",
-      targetId: page.id,
-      detail: { jobId: job.id, copiedAssets },
-    });
-
-    return { pageId: page.id, copiedAssets };
-  } catch (error) {
-    await db
-      .update(importJobs)
-      .set({
-        status: "failed",
-        failureReason: error instanceof Error ? error.message : String(error),
-        updatedAt: new Date(),
-      })
-      .where(eq(importJobs.id, job.id));
-    await recordAudit({
-      action: "import_failed",
-      summary: `Import “${job.sourceName}” failed while applying`,
-      siteId: options.siteId,
-      actor: options.actor,
-      targetType: "import_job",
-      targetId: job.id,
-    });
-    throw error;
-  }
-}
-
-export async function discardImportJob(siteId: string, jobId: string, actor: Actor): Promise<void> {
-  await ensureDb();
-  const job = await getImportJob(siteId, jobId);
-  if (!job) throw new Error("Import job not found.");
+  if (!job) throw new NotFoundError("Import session not found.");
   assertTransition("import", job.status, "discarded");
   await db
     .update(importJobs)
-    .set({ status: "discarded", completedAt: new Date(), updatedAt: new Date() })
+    .set({ status: "discarded" })
     .where(eq(importJobs.id, jobId));
   await recordAudit({
     action: "import_discarded",
-    summary: `Discarded import “${job.sourceName}”`,
+    summary: `Discarded import session "${job.sourceFilename}"`,
     siteId,
     actor,
-    targetType: "import_job",
+    targetType: "import",
     targetId: jobId,
   });
+}
+
+export async function getImportJob(siteId: string, jobId: string): Promise<ImportJob | null> {
+  await ensureDb();
+  const [row] = await db
+    .select()
+    .from(importJobs)
+    .where(and(eq(importJobs.id, jobId), eq(importJobs.siteId, siteId)))
+    .limit(1);
+  return row ?? null;
+}
+
+export const listSiteImports = listImportJobs;
+export type { ImportReport, ImportSegment } from "@/lib/documents";
+
+export async function listImportJobs(siteId: string): Promise<ImportJob[]> {
+  await ensureDb();
+  return db
+    .select()
+    .from(importJobs)
+    .where(eq(importJobs.siteId, siteId))
+    .orderBy(desc(importJobs.createdAt))
+    .limit(20);
 }

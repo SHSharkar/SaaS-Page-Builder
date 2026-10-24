@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Glyph, GLYPH_OPTIONS, MediaImage, RichText, Section, SectionHeading } from "../shell";
 import type { BlockDefinition } from "../types";
 import { SlideCarousel } from "@/components/blocks/slide-carousel";
+import { SITE_CARD, SITE_MEDIA_PLACEHOLDER, cn } from "@/lib/theme-classes";
 
 const IMAGE_NULL = z.object({ id: z.string() }).nullable().catch(null);
 
@@ -14,7 +15,7 @@ export const richText: BlockDefinition<{
   alias: "rich-text",
   name: "Rich text",
   group: "content",
-  description: "A heading and formatted paragraphs — bold, italic, links and bullets.",
+  description: "A heading and formatted paragraphs with bold, italic, links and bullets.",
   summary: "Heading and formatted copy",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "" },
@@ -33,7 +34,7 @@ export const richText: BlockDefinition<{
       type: "select",
       options: [
         { label: "Left", value: "left" },
-        { label: "Centre", value: "center" },
+        { label: "Center", value: "center" },
       ],
       default: "left",
     },
@@ -52,9 +53,9 @@ export const richText: BlockDefinition<{
   }),
   render: ({ eyebrow, heading, body, align, appearance }) => (
     <Section appearance={appearance}>
-      <div className={align === "center" ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
+      <div className={cn("w-full", align === "center" && "text-center")}>
         <SectionHeading eyebrow={eyebrow} title={heading} align={align} />
-        <RichText text={body} className="text-[15px] leading-relaxed text-[color:var(--site-muted)]" />
+        <RichText text={body} className="text-[15px] leading-relaxed text-site-muted" />
       </div>
     </Section>
   ),
@@ -99,20 +100,25 @@ export const imageBlock: BlockDefinition<{
     aspect: z.enum(["auto", "16:9", "4:3", "1:1"]).catch("auto"),
   }),
   render: ({ image, alt, caption, href, aspect, appearance }) => {
-    const ratio = { auto: undefined, "16:9": "16 / 9", "4:3": "4 / 3", "1:1": "1 / 1" }[aspect];
+    const ratioClass = {
+      auto: "",
+      "16:9": "aspect-video overflow-hidden",
+      "4:3": "aspect-[4/3] overflow-hidden",
+      "1:1": "aspect-square overflow-hidden",
+    }[aspect];
     const media = (
-      <div style={ratio ? { aspectRatio: ratio, overflow: "hidden" } : undefined}>
+      <div className={ratioClass}>
         <MediaImage
           value={image}
           alt={alt}
-          className={`w-full ${ratio ? "h-full object-cover" : ""}`}
+          className={cn("w-full", aspect !== "auto" && "h-full object-cover")}
           fallbackLabel="Image"
         />
       </div>
     );
     return (
       <Section appearance={appearance}>
-        <figure className="mx-auto max-w-4xl">
+        <figure className="w-full">
           {href ? (
             <a href={href} className="block">
               {media}
@@ -120,11 +126,7 @@ export const imageBlock: BlockDefinition<{
           ) : (
             media
           )}
-          {caption ? (
-            <figcaption className="mt-2 text-center text-xs" style={{ color: "var(--site-muted)" }}>
-              {caption}
-            </figcaption>
-          ) : null}
+          {caption ? <figcaption className="mt-2 text-center text-xs text-site-muted">{caption}</figcaption> : null}
         </figure>
       </Section>
     );
@@ -167,14 +169,33 @@ export const carousel: BlockDefinition<{
       ],
     },
     { key: "autoplay", label: "Advance automatically", type: "boolean", default: true },
-    { key: "autoplaySeconds", label: "Seconds per slide", type: "number", min: 3, max: 20, default: 6 },
+    {
+      key: "autoplaySeconds",
+      label: "Seconds per slide",
+      type: "number",
+      min: 3,
+      max: 20,
+      default: 6,
+    },
   ],
   defaults: {
     eyebrow: "Featured",
     title: "This week's highlights",
     slides: [
-      { image: null, title: "Weekend turbo trophies", text: "Double trophy points on every game.", ctaLabel: "See games", ctaHref: "/games" },
-      { image: null, title: "New: Treasure Bay", text: "Fresh slots with 50 free spins.", ctaLabel: "Play now", ctaHref: "/games" },
+      {
+        image: null,
+        title: "Weekend turbo trophies",
+        text: "Double trophy points on every game.",
+        ctaLabel: "See games",
+        ctaHref: "/games",
+      },
+      {
+        image: null,
+        title: "New: Treasure Bay",
+        text: "Fresh slots with 50 free spins.",
+        ctaLabel: "Play now",
+        ctaHref: "/games",
+      },
     ],
     autoplay: true,
     autoplaySeconds: 6,
@@ -199,7 +220,12 @@ export const carousel: BlockDefinition<{
   render: ({ eyebrow, title, slides, autoplay, autoplaySeconds, appearance }) => (
     <Section appearance={appearance}>
       <SectionHeading eyebrow={eyebrow} title={title} />
-      <SlideCarousel slides={slides} autoplay={autoplay} autoplaySeconds={autoplaySeconds} label={title || "Carousel"} />
+      <SlideCarousel
+        slides={slides}
+        autoplay={autoplay}
+        autoplaySeconds={autoplaySeconds}
+        label={title || "Carousel"}
+      />
     </Section>
   ),
 };
@@ -257,7 +283,11 @@ export const videoEmbed: BlockDefinition<{
     aspect: z.enum(["16:9", "4:3", "1:1"]).catch("16:9"),
   }),
   render: ({ provider, videoId, title, caption, aspect, appearance }) => {
-    const ratio = { "16:9": "16 / 9", "4:3": "4 / 3", "1:1": "1 / 1" }[aspect];
+    const ratioClass = {
+      "16:9": "aspect-video",
+      "4:3": "aspect-[4/3]",
+      "1:1": "aspect-square",
+    }[aspect];
     const id = (videoId || "").trim();
     const src =
       provider === "youtube"
@@ -265,26 +295,23 @@ export const videoEmbed: BlockDefinition<{
         : `https://player.vimeo.com/video/${encodeURIComponent(id)}`;
     return (
       <Section appearance={appearance}>
-        <figure className="mx-auto max-w-4xl">
-          <div className="overflow-hidden rounded-[var(--site-radius-lg)] border" style={{ borderColor: "var(--site-border)", aspectRatio: ratio }}>
+        <figure className="w-full">
+          <div className={cn("overflow-hidden rounded-site-lg border border-site-border", ratioClass)}>
             {id ? (
               <iframe
                 src={src}
                 title={title || "Embedded video"}
                 loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 className="h-full w-full"
               />
             ) : (
-              <div className="media-placeholder h-full">Add a video ID</div>
+              <div className={cn(SITE_MEDIA_PLACEHOLDER, "h-full")}>Add a video ID</div>
             )}
           </div>
-          {caption ? (
-            <figcaption className="mt-2 text-center text-xs" style={{ color: "var(--site-muted)" }}>
-              {caption}
-            </figcaption>
-          ) : null}
+          {caption ? <figcaption className="mt-2 text-center text-xs text-site-muted">{caption}</figcaption> : null}
         </figure>
       </Section>
     );
@@ -309,7 +336,7 @@ export const cardsGrid: BlockDefinition<{
   name: "Cards grid",
   group: "content",
   description: "Two to four cards with an image or icon, a title, text and a link.",
-  summary: "2–4 cards with image or icon",
+  summary: "2 to 4 cards with image or icon",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "" },
     { key: "title", label: "Section title", type: "text", default: "Popular games" },
@@ -347,9 +374,30 @@ export const cardsGrid: BlockDefinition<{
     description: "",
     columns: "3",
     cards: [
-      { image: null, icon: "trophy", title: "Trophy slots", text: "Collect trophies on every spin.", ctaLabel: "Play", ctaHref: "/games" },
-      { image: null, icon: "bolt", title: "Turbo wins", text: "Fast rounds, faster payouts.", ctaLabel: "Play", ctaHref: "/games" },
-      { image: null, icon: "star", title: "Daily picks", text: "New favourites every morning.", ctaLabel: "Play", ctaHref: "/games" },
+      {
+        image: null,
+        icon: "trophy",
+        title: "Trophy slots",
+        text: "Collect trophies on every spin.",
+        ctaLabel: "Play",
+        ctaHref: "/games",
+      },
+      {
+        image: null,
+        icon: "bolt",
+        title: "Turbo wins",
+        text: "Fast rounds, faster payouts.",
+        ctaLabel: "Play",
+        ctaHref: "/games",
+      },
+      {
+        image: null,
+        icon: "star",
+        title: "Daily picks",
+        text: "New favorites every morning.",
+        ctaLabel: "Play",
+        ctaHref: "/games",
+      },
     ],
   },
   schema: z.looseObject({
@@ -371,37 +419,38 @@ export const cardsGrid: BlockDefinition<{
       .catch([]),
   }),
   render: ({ eyebrow, title, description, columns, cards, appearance }) => {
-    const cols = { "2": "sm:grid-cols-2", "3": "sm:grid-cols-2 lg:grid-cols-3", "4": "sm:grid-cols-2 lg:grid-cols-4" }[columns];
+    const cols = {
+      "2": "sm:grid-cols-2",
+      "3": "sm:grid-cols-2 lg:grid-cols-3",
+      "4": "sm:grid-cols-2 lg:grid-cols-4",
+    }[columns];
     return (
       <Section appearance={appearance}>
         <SectionHeading eyebrow={eyebrow} title={title} description={description} />
-        <div className={`grid gap-4 ${cols}`}>
+        <div className={cn("grid gap-4", cols)}>
           {cards.map((card, index) => (
-            <div key={index} className="group flex flex-col overflow-hidden rounded-[var(--site-radius-md)] border card-surface">
+            <div
+              key={index}
+              className={cn("group flex flex-col overflow-hidden rounded-site-md border", SITE_CARD)}
+            >
               {card.image?.id ? (
                 <MediaImage value={card.image} alt={card.title} rounded={false} className="h-40 w-full object-cover" />
               ) : (
                 <div className="flex h-14 items-end px-5">
-                  <span
-                    className="grid h-10 w-10 place-items-center rounded-[var(--site-radius-sm)]"
-                    style={{ background: "color-mix(in srgb, var(--site-accent) 16%, transparent)", color: "var(--site-accent)" }}
-                  >
+                  <span className="grid h-10 w-10 place-items-center rounded-site-sm bg-site-accent/15 text-site-accent">
                     <Glyph name={card.icon} size={18} />
                   </span>
                 </div>
               )}
               <div className="flex flex-1 flex-col p-5">
-                <p className="font-heading text-lg leading-tight">{card.title}</p>
+                <p className="font-heading text-lg leading-tight text-site-text">{card.title}</p>
                 {card.text ? (
-                  <p className="mt-1.5 flex-1 text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-                    {card.text}
-                  </p>
+                  <p className="mt-1.5 flex-1 text-sm leading-relaxed text-site-muted">{card.text}</p>
                 ) : null}
                 {card.ctaLabel ? (
                   <a
                     href={card.ctaHref || "#"}
-                    className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold"
-                    style={{ color: "var(--site-accent)" }}
+                    className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-site-accent"
                   >
                     {card.ctaLabel}
                     <Glyph name="arrow" size={14} />
@@ -425,7 +474,7 @@ export const steps: BlockDefinition<{
   alias: "steps",
   name: "Numbered steps",
   group: "content",
-  description: "How-it-works rows, three to eight steps, numbered with a connecting line.",
+  description: "How-it-works rows, three to eight steps, numbered cleanly.",
   summary: "How-it-works steps",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "How it works" },
@@ -464,19 +513,16 @@ export const steps: BlockDefinition<{
       <SectionHeading eyebrow={eyebrow} title={title} description={description} />
       <ol className="relative grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item, index) => (
-          <li key={index} className="relative rounded-[var(--site-radius-md)] border p-5 card-surface">
+          <li key={index} className={cn("relative rounded-site-md border p-5", SITE_CARD)}>
             <span
-              className="grid h-9 w-9 place-items-center rounded-full font-heading text-sm font-bold"
-              style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
+              className="grid h-9 w-9 place-items-center rounded-full bg-site-accent font-heading text-sm font-bold text-site-accent-contrast"
               aria-hidden="true"
             >
               {index + 1}
             </span>
-            <p className="mt-4 font-heading text-lg leading-tight">{item.title}</p>
+            <p className="mt-4 font-heading text-lg leading-tight text-site-text">{item.title}</p>
             {item.text ? (
-              <p className="mt-1.5 text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-                {item.text}
-              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-site-muted">{item.text}</p>
             ) : null}
           </li>
         ))}
@@ -542,7 +588,14 @@ export const featuresGrid: BlockDefinition<{
     description: z.string().catch(""),
     variant: z.enum(["cards", "stats"]).catch("cards"),
     items: z
-      .array(z.object({ icon: z.string().catch("shield"), value: z.string().catch(""), title: z.string().catch(""), text: z.string().catch("") }))
+      .array(
+        z.object({
+          icon: z.string().catch("shield"),
+          value: z.string().catch(""),
+          title: z.string().catch(""),
+          text: z.string().catch(""),
+        }),
+      )
       .catch([]),
   }),
   render: ({ eyebrow, title, description, variant, items, appearance }) => (
@@ -551,34 +604,25 @@ export const featuresGrid: BlockDefinition<{
       {variant === "stats" ? (
         <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item, index) => (
-            <div key={index} className="rounded-[var(--site-radius-md)] border p-6 text-center card-surface">
-              <dd className="font-heading text-4xl leading-none tracking-tight" style={{ color: "var(--site-accent)" }}>
+            <div key={index} className={cn("rounded-site-md border p-6 text-center", SITE_CARD)}>
+              <dd className="font-heading text-4xl leading-none tracking-tight text-site-accent">
                 {item.value || item.title}
               </dd>
-              <dt className="mt-2 text-sm font-medium">{item.title}</dt>
-              {item.text ? (
-                <p className="mt-1 text-xs" style={{ color: "var(--site-muted)" }}>
-                  {item.text}
-                </p>
-              ) : null}
+              <dt className="mt-2 text-sm font-medium text-site-text">{item.title}</dt>
+              {item.text ? <p className="mt-1 text-xs text-site-muted">{item.text}</p> : null}
             </div>
           ))}
         </dl>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item, index) => (
-            <div key={index} className="rounded-[var(--site-radius-md)] border p-6 card-surface">
-              <span
-                className="grid h-10 w-10 place-items-center rounded-[var(--site-radius-sm)]"
-                style={{ background: "color-mix(in srgb, var(--site-accent) 16%, transparent)", color: "var(--site-accent)" }}
-              >
+            <div key={index} className={cn("rounded-site-md border p-6", SITE_CARD)}>
+              <span className="grid h-10 w-10 place-items-center rounded-site-sm bg-site-accent/15 text-site-accent">
                 <Glyph name={item.icon} size={18} />
               </span>
-              <p className="mt-4 font-heading text-lg leading-tight">{item.title}</p>
+              <p className="mt-4 font-heading text-lg leading-tight text-site-text">{item.title}</p>
               {item.text ? (
-                <p className="mt-1.5 text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-                  {item.text}
-                </p>
+                <p className="mt-1.5 text-sm leading-relaxed text-site-muted">{item.text}</p>
               ) : null}
             </div>
           ))}
@@ -649,14 +693,13 @@ export const faq: BlockDefinition<{
     return (
       <Section appearance={appearance}>
         <SectionHeading eyebrow={eyebrow} title={title} description={description} />
-        <div className="mx-auto max-w-3xl divide-y" style={{ borderColor: "var(--site-border)" }}>
+        <div className="divide-y divide-site-border">
           {items.map((item, index) => (
-            <details key={index} className="group border-b py-4" style={{ borderColor: "var(--site-border)" }}>
+            <details key={index} className="group border-b border-site-border py-4">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-left">
-                <span className="font-heading text-base">{item.question}</span>
+                <span className="font-heading text-base text-site-text">{item.question}</span>
                 <span
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full border transition group-open:rotate-45"
-                  style={{ borderColor: "var(--site-border)", color: "var(--site-muted)" }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-site-border text-site-muted transition group-open:rotate-45"
                   aria-hidden="true"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -664,9 +707,7 @@ export const faq: BlockDefinition<{
                   </svg>
                 </span>
               </summary>
-              <p className="mt-3 text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-                {item.answer}
-              </p>
+              <p className="mt-3 text-sm leading-relaxed text-site-muted">{item.answer}</p>
             </details>
           ))}
         </div>
@@ -688,7 +729,7 @@ export const dividerSpacer: BlockDefinition<{
 }> = {
   alias: "divider-spacer",
   name: "Divider / spacer",
-  group: "content",
+  group: "utility",
   description: "A rule or empty breathing room with three sizes and three line styles.",
   summary: "Rule or empty space",
   fields: [
@@ -731,12 +772,15 @@ export const dividerSpacer: BlockDefinition<{
     height: z.enum(["sm", "md", "lg"]).catch("md"),
     lineStyle: z.enum(["solid", "dashed", "dotted"]).catch("solid"),
   }),
-  render: ({ kind, height, lineStyle, appearance }) => {
+  render: ({ kind, height, lineStyle }) => {
     const pad = { sm: "py-4", md: "py-8", lg: "py-14" }[height];
+    const lineClass = { solid: "border-solid", dashed: "border-dashed", dotted: "border-dotted" }[
+      lineStyle
+    ];
     if (kind === "space") return <div className={pad} aria-hidden="true" />;
     return (
-      <div className={`mx-auto max-w-[1160px] px-5 sm:px-8 ${pad}`}>
-        <hr style={{ borderColor: "var(--site-border)", borderTopStyle: lineStyle }} />
+      <div className={cn("mx-auto w-full px-5 sm:px-8", pad)}>
+        <hr className={cn("border-t border-site-border", lineClass)} />
       </div>
     );
   },

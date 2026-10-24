@@ -1,48 +1,47 @@
-import { eq, sql } from "drizzle-orm";
+import "server-only";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   domains,
   pages,
-  platformSettings,
   staffInvites,
   templates,
   users,
   type User,
 } from "@/lib/db/schema";
 import {
-  DOCUMENT_SCHEMA_VERSION,
   DEFAULT_THEME,
+  DOCUMENT_SCHEMA_VERSION,
+  newBlockId,
   type BlockNode,
   type PageDocument,
-  type PlaceholderSpec,
 } from "@/lib/documents";
-import { DEFAULT_APPEARANCE } from "@/lib/registry/types";
 import { defaultPropsFor } from "@/lib/registry";
+import { syncComponentCatalog } from "@/lib/registry/sync";
 import { hashToken, newToken } from "@/lib/auth/password";
 import { provisionAccount } from "@/lib/auth/mutations";
 import { listRoles, permissionKeysForUser, syncRbacCatalog } from "@/lib/auth/rbac";
+import type { Actor } from "@/lib/auth/session";
+import { seedPlatformSettings } from "@/lib/settings";
 import { createSite } from "@/lib/sites";
 import { createPage, publishPage } from "@/lib/pages";
-import { getSiteContent, publishGlobals, saveGlobalsDraft } from "@/lib/globals";
-import { ingestSeedImage } from "@/lib/media";
-import type { Actor } from "@/lib/auth/session";
+import { publishGlobals, saveDefaultSeo, saveGlobalsDraft } from "@/lib/globals";
+import { uploadMedia } from "@/lib/media";
+import { builtInTemplates } from "@/lib/templates";
 import { createImportJob } from "@/lib/importer";
-import { enqueue } from "@/lib/queue";
-
-export { DEMO_PASSWORD } from "@/lib/demo-accounts";
 import { DEMO_PASSWORD as DEMO_PASSWORD_VALUE } from "@/lib/demo-accounts";
 
-const NO_APPEARANCE = { ...DEFAULT_APPEARANCE };
+export { DEMO_PASSWORD } from "@/lib/demo-accounts";
 
-function blk(type: string, props: Record<string, unknown> = {}, appearance: Record<string, unknown> = {}): BlockNode {
+function blk(type: string, props: Record<string, unknown> = {}): BlockNode {
   return {
     type,
     props: {
       ...defaultPropsFor(type),
+      id: newBlockId(type),
       ...props,
-      appearance: { ...NO_APPEARANCE, ...appearance },
     },
   };
 }
@@ -50,14 +49,14 @@ function blk(type: string, props: Record<string, unknown> = {}, appearance: Reco
 function doc(content: BlockNode[]): PageDocument {
   return {
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
-    root: { props: { contentWidth: "default", background: "default" } },
+    root: { props: {} },
     content,
   };
 }
 
 async function seedActor(user: User): Promise<Actor> {
   const roles = await listRoles();
-  const adminRole = roles.find((role) => role.key === "admin");
+  const matchedRole = roles.find((role) => role.key === user.role);
   const permissions = await permissionKeysForUser(user.id);
   return {
     user,
@@ -73,15 +72,36 @@ async function seedActor(user: User): Promise<Actor> {
       createdAt: new Date(),
       updatedAt: new Date(),
     },
-    roles: adminRole ? [adminRole] : [],
+    roles: matchedRole ? [matchedRole] : [],
     permissions: new Set(permissions),
     stepUpValid: true,
   };
 }
 
-export async function seedIfEmpty(): Promise<void> {
+async function ingestSeedFile(options: {
+  siteId: string;
+  filename: string;
+  sourcePath: string;
+  altText: string;
+  actor: Actor;
+}) {
+  const bytes = await readFile(options.sourcePath);
+  const { asset } = await uploadMedia({
+    siteId: options.siteId,
+    filename: options.filename,
+    mimeType: "image/jpeg",
+    bytes,
+    altText: options.altText,
+    actor: options.actor,
+  });
+  return asset;
+}
 
+export async function seedIfEmpty(): Promise<void> {
   await syncRbacCatalog();
+  await syncComponentCatalog();
+  await seedPlatformSettings();
+
   const [existing] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
   if ((existing?.count ?? 0) > 0) return;
 
@@ -124,6 +144,7 @@ export async function seedIfEmpty(): Promise<void> {
   });
 
   const actor = await seedActor(admin);
+  const editorActor = await seedActor(editor);
 
   const site = await createSite({
     name: "Trofeo Reward",
@@ -131,49 +152,48 @@ export async function seedIfEmpty(): Promise<void> {
     createdBy: admin.id,
     theme: {
       ...DEFAULT_THEME,
-      accent: "#c8a24a",
-      accentContrast: "#0b1120",
-      background: "#0b1120",
-      surface: "#121a2b",
-      text: "#f4f6fb",
-      muted: "#9aa4bb",
-      border: "#243049",
-      logoText: "Trofēo",
+      palette: "obsidian-gold",
+      fontPair: "editorial",
+      accent: "#d4af37",
+      accentContrast: "#090b10",
+      surface: "#0b0d14",
+      ink: "#f8fafc",
+      logoText: "Trofeo",
       tagline: "Rewards that keep players playing.",
       radius: "soft",
     },
   });
 
   const assets = {
-    hero: await ingestSeedImage({
+    hero: await ingestSeedFile({
       siteId: site.id,
       filename: "hero-glow.jpg",
       sourcePath: path.join(process.cwd(), "public", "seed", "hero-glow.jpg"),
       actor,
       altText: "Golden bokeh light over a midnight blue background",
     }),
-    coin: await ingestSeedImage({
+    coin: await ingestSeedFile({
       siteId: site.id,
       filename: "coin-blitz.jpg",
       sourcePath: path.join(process.cwd(), "public", "seed", "coin-blitz.jpg"),
       actor,
       altText: "Coin Blitz game cover",
     }),
-    lucky: await ingestSeedImage({
+    lucky: await ingestSeedFile({
       siteId: site.id,
       filename: "lucky-streak.jpg",
       sourcePath: path.join(process.cwd(), "public", "seed", "lucky-streak.jpg"),
       actor,
       altText: "Lucky Streak game cover",
     }),
-    treasure: await ingestSeedImage({
+    treasure: await ingestSeedFile({
       siteId: site.id,
       filename: "treasure-bay.jpg",
       sourcePath: path.join(process.cwd(), "public", "seed", "treasure-bay.jpg"),
       actor,
       altText: "Treasure Bay game cover",
     }),
-    fruits: await ingestSeedImage({
+    fruits: await ingestSeedFile({
       siteId: site.id,
       filename: "neon-fruits.jpg",
       sourcePath: path.join(process.cwd(), "public", "seed", "neon-fruits.jpg"),
@@ -195,377 +215,223 @@ export async function seedIfEmpty(): Promise<void> {
   });
 
   const navigation = doc([
+    blk("announcement-bar", {
+      badge: "WEEKEND TURBO",
+      message: "Double trophies on every featured game through Sunday midnight UTC.",
+      ctaLabel: "See Bonuses",
+      ctaHref: "/bonus-terms",
+      dismissible: "true",
+      tone: "gold",
+    }),
     blk("site-header", {
-      logoText: "Trofēo",
+      brandName: "Trofeo Reward",
+      tagline: "Verified Rewards",
       links: [
-        { label: "Games", href: "/games" },
-        { label: "Bonuses", href: "/bonuses" },
-        { label: "How it works", href: "/how-it-works" },
-        { label: "Rewards", href: "/rewards/wallet" },
+        { label: "Home", href: "/" },
+        { label: "Rewards Wallet", href: "/rewards/wallet" },
+        { label: "Bonus Terms", href: "/bonus-terms" },
       ],
-      cta: { label: "Join free", href: "/join", style: "solid" },
-      announcement: "Weekend turbo: double trophies on every slot →",
-      announcementHref: "/bonuses",
+      ctaLabel: "Claim Bonus",
+      ctaHref: "/rewards/wallet",
+      ctaTrackingId: "nav_claim_bonus",
+      sticky: "true",
     }),
   ]);
 
   const footer = doc([
-    blk(
-      "site-footer",
-      {
-        columns: [
-          { title: "Play", links: "Games|/games\nBonuses|/bonuses\nHow it works|/how-it-works" },
-          { title: "Rewards", links: "Wallet|/rewards/wallet\nRedeem|/rewards\nTrophies|/trophies" },
-          { title: "Company", links: "About|/about\nPress|/press\nCareers|/careers" },
-        ],
-        legal:
-          "Trofēo Reward is a social games platform. No purchase necessary. 18+ only. Play responsibly — set limits and take breaks.",
-      },
-      { spacing: "md", background: "inherit" },
-    ),
+    blk("site-footer", {
+      brandName: "Trofeo Reward",
+      summary:
+        "Curated game offers, transparent bonus terms, and fast payout verification for 18+ players.",
+      columns: [
+        {
+          heading: "Rewards",
+          links: [
+            { label: "Rewards Wallet", href: "/rewards/wallet" },
+            { label: "Bonus Terms", href: "/bonus-terms" },
+          ],
+        },
+        {
+          heading: "Safety",
+          links: [
+            { label: "BeGambleAware", href: "https://www.begambleaware.org" },
+            { label: "GamCare", href: "https://www.gamcare.org.uk" },
+          ],
+        },
+      ],
+      badges: [{ label: "18+ Only" }, { label: "MGA Licensed" }, { label: "SSL Secured" }],
+      legalNote:
+        "18+ only. Trofeo Reward promotes regulated gaming offers. Please play within your limits.",
+    }),
     blk("sticky-cta-dock", {
-      message: "Welcome bonus ready to claim",
-      primary: { label: "Claim now", href: "/join", style: "solid" },
-      secondary: { label: "Details", href: "/bonuses", style: "outline" },
+      offer: "100% up to $200 + 50 Free Spins ready to claim",
+      subtext: "18+ | T&Cs apply | 35x wagering",
+      buttonLabel: "Claim Offer",
+      buttonHref: "/rewards/wallet",
+      trackingId: "sticky_claim_offer",
     }),
   ]);
 
-  for (const [kind, document] of [
-    ["navigation", navigation],
-    ["footer", footer],
-  ] as const) {
-    const row = await getSiteContent(site.id, kind);
-    await saveGlobalsDraft(site.id, kind, document, row?.lockVersion ?? 0, actor);
-    await publishGlobals(site.id, kind, actor);
-  }
+  await saveGlobalsDraft(site.id, "navigation", navigation, actor);
+  await publishGlobals(site.id, "navigation", actor);
+  await saveGlobalsDraft(site.id, "footer", footer, actor);
+  await publishGlobals(site.id, "footer", actor);
+  await saveDefaultSeo(
+    site.id,
+    {
+      metaTitle: "Trofeo Reward | Verified Bonuses & Fast Payouts",
+      metaDescription:
+        "Play featured games, collect trophies in a single wallet, and redeem verified rewards.",
+    },
+    actor,
+  );
 
   const homeDocument = doc([
-    blk(
-      "hero",
-      {
-        eyebrow: "Trofēo Reward",
-        title: "Play the games you love. Keep the rewards.",
-        subtitle:
-          "Create a free account, collect trophies on every round, and swap them for gift cards and bonus cash. No purchase needed.",
-        primary: { label: "Claim welcome bonus", href: "/join", style: "solid" },
-        secondary: { label: "See how it works", href: "#how-it-works", style: "outline" },
-        background: { id: assets.hero.id },
-        overlay: 62,
-        rating: 4.6,
-        ratingLabel: "Rated 4.6 by 12,400 players",
-        badges: ["18+", "Licensed", "Responsible play"],
-      },
-      { spacing: "none" },
-    ),
-    blk("trust-strip", {}, { spacing: "sm", background: "surface" }),
-    blk(
-      "bonus-card",
-      {
-        brand: "Trofēo Reward",
-        badge: "Welcome offer",
-        headline: "100% up to $200",
-        subline: "+ 50 free spins on your first deposit",
-        freeSpins: "50",
-        minDeposit: "$10",
-        wagering: "35x",
-        maxCashout: "$2,000",
-        rating: 4.6,
-        reviewCount: "12,400 reviews",
-        cta: { label: "Claim welcome bonus", href: "/join", style: "solid" },
-      },
-      { spacing: "lg" },
-    ),
-    blk(
-      "cards-grid",
-      {
-        eyebrow: "The floor",
-        title: "Games players keep coming back to",
-        description: "Four thousand titles, curated weekly by our games team.",
-        columns: "4",
-        cards: [
-          {
-            image: { id: assets.coin.id },
-            icon: "trophy",
-            title: "Coin Blitz",
-            text: "Cascading coins and a trophy ladder that resets every hour.",
-            ctaLabel: "Play Coin Blitz",
-            ctaHref: "/games/coin-blitz",
-          },
-          {
-            image: { id: assets.lucky.id },
-            icon: "spark",
-            title: "Lucky Streak",
-            text: "Green clovers, gem multipliers and a 4,000x top payout.",
-            ctaLabel: "Play Lucky Streak",
-            ctaHref: "/games/lucky-streak",
-          },
-          {
-            image: { id: assets.treasure.id },
-            icon: "gift",
-            title: "Treasure Bay",
-            text: "Pearl bonuses on every chest, with a moonlit free-spin round.",
-            ctaLabel: "Play Treasure Bay",
-            ctaHref: "/games/treasure-bay",
-          },
-          {
-            image: { id: assets.fruits.id },
-            icon: "bolt",
-            title: "Neon Fruits",
-            text: "The retro classic, rebuilt with electric neon win lines.",
-            ctaLabel: "Play Neon Fruits",
-            ctaHref: "/games/neon-fruits",
-          },
-        ],
-      },
-      { spacing: "lg" },
-    ),
-    blk(
-      "steps",
-      {
-        eyebrow: "How it works",
-        title: "Three steps to your first reward",
-        items: [
-          { title: "Create a free account", text: "Sign up in under a minute. No purchase, no card details." },
-          { title: "Play and collect trophies", text: "Every game you open adds trophies to one wallet." },
-          { title: "Redeem what you want", text: "Swap trophies for gift cards, bonus cash or free spins." },
-        ],
-      },
-      { spacing: "lg", background: "muted" },
-    ),
-    blk(
-      "casino-compare-table",
-      {
-        eyebrow: "Compare",
-        title: "The three bonuses worth your time",
-        description: "Terms verified by our team this week. Wagering shown as a multiplier.",
-        rows: [
-          {
-            casino: "Trofēo Reward",
-            bonus: "100% up to $200",
-            highlights: "24h payouts · 4,000 games · 50 spins",
-            rating: 4.6,
-            ctaLabel: "Claim",
-            ctaHref: "/join",
-            highlight: "yes",
-          },
-          {
-            casino: "Lucky Streak",
-            bonus: "50 free spins",
-            highlights: "No deposit · 40x wagering",
-            rating: 4.2,
-            ctaLabel: "Claim",
-            ctaHref: "/join",
-            highlight: "no",
-          },
-          {
-            casino: "Treasure Bay",
-            bonus: "125% up to $500",
-            highlights: "Crypto accepted · 30x wagering",
-            rating: 4,
-            ctaLabel: "Claim",
-            ctaHref: "/join",
-            highlight: "no",
-          },
-        ],
-      },
-      { spacing: "lg" },
-    ),
-    blk(
-      "promo-banner",
-      {
-        headline: "200 free spins this weekend only",
-        offer: "On every Neon Fruits deposit, Friday to Sunday",
-        code: "TROFEO200",
-        cta: { label: "Redeem code", href: "/join", style: "solid" },
-      },
-      { spacing: "none" },
-    ),
-    blk(
-      "features-grid",
-      {
-        eyebrow: "By the numbers",
-        title: "Why players stay",
-        variant: "stats",
-        items: [
-          { icon: "gift", value: "50k", title: "Rewards claimed", text: "Gift cards and bonus cash since launch." },
-          { icon: "clock", value: "24h", title: "Payout window", text: "Most withdrawals land the same day." },
-          { icon: "shield", value: "4.6", title: "Player rating", text: "From 12,400 verified reviews." },
-        ],
-      },
-      { spacing: "lg", background: "surface" },
-    ),
-    blk(
-      "faq",
-      {
-        eyebrow: "Questions",
-        title: "Frequently asked",
-        items: [
-          {
-            question: "Is Trofēo free to play?",
-            answer:
-              "Yes. Creating an account and playing social games is free, and no purchase is ever required to collect or redeem trophies.",
-          },
-          {
-            question: "How do trophies become rewards?",
-            answer:
-              "Trophies collect in one wallet. Open the rewards page, pick a gift card or bonus, and confirm — most land within 24 hours.",
-          },
-          {
-            question: "What are wagering requirements?",
-            answer:
-              "Wagering is the number of times bonus winnings must be played before withdrawal. The welcome bonus uses 35x, and the full terms sit on every bonus card.",
-          },
-          {
-            question: "Can I set my own limits?",
-            answer:
-              "Yes. Deposit, session and spend limits are in your account settings, and they take effect immediately.",
-          },
-        ],
-        structuredData: true,
-      },
-      { spacing: "lg" },
-    ),
-    blk(
-      "cta-banner",
-      {
-        title: "Your first trophy is one spin away",
-        text: "Join 120,000 players collecting rewards across four thousand games.",
-        primary: { label: "Create free account", href: "/join", style: "solid" },
-        secondary: { label: "Talk to support", href: "/contact", style: "ghost" },
-      },
-      { spacing: "lg", background: "muted" },
-    ),
+    blk("hero", {
+      eyebrow: "Trofeo Reward",
+      headline: "Play the games you love and keep every verified reward",
+      subheadline:
+        "Create an account, collect trophies on every round, and redeem them for gift cards and bonus cash with transparent wagering terms.",
+      primaryLabel: "Claim Welcome Bonus",
+      primaryHref: "/rewards/wallet",
+      primaryTrackingId: "hero_claim_welcome",
+      secondaryLabel: "Read Bonus Terms",
+      secondaryHref: "/bonus-terms",
+      media: { id: assets.hero.id, alt: assets.hero.altText },
+      layout: "split",
+      align: "left",
+      theme: "dark",
+    }),
+    blk("trust-strip", {}),
+    blk("bonus-card", {
+      rankBadge: "#1 Editor's Pick",
+      brand: "Trofeo Reward",
+      rating: "9.8 / 10",
+      headline: "100% up to $200 + 50 Free Spins",
+      subheadline: "Instant trophy wallet credit + verified 24-hour payouts",
+      bonusCode: "TROFEO200",
+      wagering: "35x bonus",
+      minDeposit: "$10",
+      payoutSpeed: "Under 24 hours",
+      ctaLabel: "Claim Welcome Bonus",
+      ctaHref: "/rewards/wallet",
+      ctaTrackingId: "bonus_card_trofeo",
+      terms:
+        "18+ | New players only | Min deposit $10 | 35x wagering on bonus | Max cashout $2,000 | Full terms apply.",
+      highlight: "featured",
+    }),
+    blk("cards-grid", {
+      eyebrow: "Featured Floor",
+      heading: "Games players keep coming back to",
+      columns: "4",
+      cards: [
+        {
+          media: { id: assets.coin.id, alt: assets.coin.altText },
+          tag: "Hourly Ladder",
+          title: "Coin Blitz",
+          body: "Cascading coins and a trophy ladder that resets every hour.",
+          linkLabel: "Explore",
+          linkHref: "/rewards/wallet",
+        },
+        {
+          media: { id: assets.lucky.id, alt: assets.lucky.altText },
+          tag: "High Multiplier",
+          title: "Lucky Streak",
+          body: "Clovers, gem multipliers, and a 4,000x top payout ceiling.",
+          linkLabel: "Explore",
+          linkHref: "/rewards/wallet",
+        },
+        {
+          media: { id: assets.treasure.id, alt: assets.treasure.altText },
+          tag: "Bonus Chests",
+          title: "Treasure Bay",
+          body: "Pearl bonuses on every chest with a moonlit free-spin round.",
+          linkLabel: "Explore",
+          linkHref: "/rewards/wallet",
+        },
+        {
+          media: { id: assets.fruits.id, alt: assets.fruits.altText },
+          tag: "Classic Arcade",
+          title: "Neon Fruits",
+          body: "The retro classic rebuilt with crisp neon win lines.",
+          linkLabel: "Explore",
+          linkHref: "/rewards/wallet",
+        },
+      ],
+    }),
+    blk("steps", {
+      eyebrow: "How It Works",
+      heading: "Three steps to your first reward",
+      layout: "horizontal",
+      steps: [
+        {
+          title: "Create your account",
+          body: "Verify your email in under a minute and unlock the starter wallet.",
+        },
+        {
+          title: "Collect trophies",
+          body: "Every eligible game round adds trophies to one unified balance.",
+        },
+        {
+          title: "Redeem anytime",
+          body: "Swap trophies for gift cards, bonus cash, or free-spin bundles.",
+        },
+      ],
+    }),
+    blk("casino-compare-table", {
+      heading: "Top verified bonus offers this week",
+      subheading: "All wagering multipliers and payout speeds audited by our editorial team.",
+    }),
+    blk("promo-banner", {
+      badge: "WEEKEND CODE",
+      text: "200 Free Spins on Neon Fruits with your weekend deposit",
+      code: "TROFEO200",
+      ctaLabel: "Redeem Code",
+      ctaHref: "/rewards/wallet",
+      tone: "gold",
+    }),
+    blk("faq", {
+      eyebrow: "Questions",
+      heading: "Frequently asked questions",
+      emitJsonLd: "true",
+      items: [
+        {
+          question: "How do trophies turn into rewards?",
+          answer:
+            "Trophies accumulate in one wallet. Pick a gift card or bonus package on the wallet page and confirm your request; most redemptions complete within 24 hours.",
+        },
+        {
+          question: "What are the wagering requirements on the welcome bonus?",
+          answer:
+            "The welcome offer carries a 35x wagering requirement on the bonus amount, with full game weighting tables published on the bonus terms page.",
+        },
+        {
+          question: "Can I set deposit and session limits?",
+          answer:
+            "Yes. Deposit, loss, and session time limits are available at any time and take effect immediately.",
+        },
+      ],
+    }),
+    blk("responsible-gaming", {}),
   ]);
 
   const home = await createPage({
     siteId: site.id,
     title: "Home",
-    slug: "",
+    slug: "/",
+    isHomepage: true,
     document: homeDocument,
     actor,
-    isHomepage: true,
     seo: {
-      title: "Trofēo Reward — play, collect trophies, redeem rewards",
-      description:
-        "Create a free account, collect trophies on every round and redeem them for gift cards and bonus cash. 18+, licensed and responsible.",
-      canonicalMode: "self",
+      metaTitle: "Trofeo Reward - Play, Collect Trophies, Redeem Rewards",
+      metaDescription:
+        "Create an account, collect trophies on featured games, and redeem gift cards or bonus cash with verified payout times.",
       noindex: false,
     },
   });
+  await publishPage(site.id, home.id, actor, { note: "Initial launch", source: "manual" });
 
-  await publishPage(site.id, home.id, actor, "manual");
-
-  const walletDocument = doc([
-    blk(
-      "hero",
-      {
-        eyebrow: "Rewards",
-        title: "Your trophy wallet, in plain sight",
-        subtitle:
-          "See what you have collected, what it is worth, and exactly how long a redemption takes.",
-        primary: { label: "Open my wallet", href: "/join", style: "solid" },
-        secondary: { label: "Browse rewards", href: "/rewards", style: "outline" },
-        rating: 0,
-        ratingLabel: "",
-        height: "compact",
-        badges: [],
-      },
-      { spacing: "lg", background: "muted" },
-    ),
-    blk("rich-text", {
-      eyebrow: "How balances work",
-      heading: "Trophies in, rewards out",
-      body:
-        "Every game you open adds trophies to a single balance. Trophies never expire while your account is active.\n\nWhen you redeem, the balance is reserved immediately and the reward is issued once our team confirms the request — usually **within 24 hours**.\n\nIf a reward is out of stock, you can swap it for another gift card of equal value, or keep the trophies for later.",
-    }),
-    blk(
-      "steps",
-      {
-        eyebrow: "Cash out",
-        title: "From wallet to reward in three steps",
-        items: [
-          { title: "Pick a reward", text: "Gift cards, bonus cash, or free spins on your favourite game." },
-          { title: "Confirm the request", text: "We reserve the trophies the moment you confirm." },
-          { title: "Get it delivered", text: "Codes arrive by email within 24 hours, usually much sooner." },
-        ],
-      },
-      { spacing: "lg" },
-    ),
-    blk("payment-strip", {}, { spacing: "sm", background: "surface" }),
-    blk(
-      "faq",
-      {
-        eyebrow: "Wallet questions",
-        title: "Good to know",
-        items: [
-          { question: "Do trophies expire?", answer: "No, while your account stays active. Dormant accounts keep trophies for 12 months." },
-          { question: "Can I split a redemption?", answer: "Yes — any reward can be paid in trophies plus bonus cash if you prefer." },
-          { question: "What if the code does not arrive?", answer: "Contact support with the redemption reference; we reissue within one working day." },
-        ],
-      },
-      { spacing: "lg" },
-    ),
-    blk(
-      "cta-banner",
-      {
-        title: "Ready to redeem?",
-        text: "Open your wallet and pick something worth playing for.",
-        primary: { label: "Go to my wallet", href: "/join", style: "solid" },
-        secondary: { label: "", href: "", style: "ghost" },
-      },
-      { spacing: "lg", background: "muted" },
-    ),
-  ]);
-
-  const wallet = await createPage({
-    siteId: site.id,
-    title: "Rewards wallet",
-    slug: "rewards/wallet",
-    document: walletDocument,
-    actor,
-    seo: {
-      title: "Rewards wallet — Trofēo Reward",
-      description: "Track trophies, see what they are worth and redeem in three steps.",
-      canonicalMode: "self",
-      noindex: false,
-    },
-  });
-  await publishPage(site.id, wallet.id, actor, "manual");
-
-  const termsDocument = doc([
-    blk("rich-text", {
-      eyebrow: "Legal",
-      heading: "Bonus terms",
-      body:
-        "## Welcome bonus\n\nThe welcome bonus is 100% of your first deposit up to $200, plus 50 free spins on Coin Blitz.\n\n## Wagering\n\nBonus winnings carry a 35x wagering requirement, calculated on the bonus amount only. Game contributions vary: slots contribute 100%, table games 10%.\n\n## Expiry\n\nBonus funds expire seven days after credit. Free spins expire after 48 hours.",
-    }),
-    blk("faq", {
-      eyebrow: "Terms",
-      title: "What players ask about our terms",
-      items: [
-        { question: "Is the bonus cash or a free bet?", answer: "It is bonus cash, playable on any slot, with winnings withdrawable after wagering." },
-        { question: "What is the maximum cashout?", answer: "$2,000 from the welcome bonus." },
-      ],
-      structuredData: false,
-    }),
-  ]);
-
-  const terms = await createPage({
-    siteId: site.id,
-    title: "Bonus terms",
-    slug: "bonus-terms",
-    document: termsDocument,
-    actor,
-    seo: {
-      title: "Bonus terms — Trofēo Reward",
-      description: "Full wagering, expiry and cashout terms for every Trofēo Reward bonus.",
-      canonicalMode: "self",
-      noindex: false,
-    },
-  });
-  await publishPage(site.id, terms.id, actor, "manual");
-
-  const secondVersionDoc: PageDocument = {
+  const updatedHomeDoc: PageDocument = {
     ...homeDocument,
     content: homeDocument.content.map((node) =>
       node.type === "promo-banner"
@@ -573,150 +439,134 @@ export async function seedIfEmpty(): Promise<void> {
             ...node,
             props: {
               ...node.props,
-              headline: "300 free spins this weekend only",
+              text: "300 Free Spins on Neon Fruits this weekend",
               code: "TROFEO300",
             },
           }
         : node,
     ),
   };
-  await db.update(pages).set({ draftDocument: secondVersionDoc, lockVersion: 1 }).where(eq(pages.id, home.id));
-  await publishPage(site.id, home.id, actor, "manual");
-  await db.update(pages).set({ draftDocument: secondVersionDoc, lockVersion: 2 }).where(eq(pages.id, home.id));
+  await db
+    .update(pages)
+    .set({ draftDocument: updatedHomeDoc, updatedAt: new Date() })
+    .where(eq(pages.id, home.id));
+  await publishPage(site.id, home.id, actor, {
+    note: "Weekend 300 spins campaign",
+    source: "manual",
+  });
 
-  const gamePlaceholders: PlaceholderSpec[] = [
-    { key: "brand", label: "Brand name", kind: "text", defaultValue: "Trofēo Reward" },
-    { key: "bonus_amount", label: "Bonus amount", kind: "text", defaultValue: "100% up to $200" },
-    { key: "free_spins", label: "Free spins", kind: "number", defaultValue: "50" },
-    { key: "cta_link", label: "Button link", kind: "link", defaultValue: "/join" },
-    { key: "game_name", label: "Featured game", kind: "text", defaultValue: "Coin Blitz" },
-  ];
-
-  await db.insert(templates).values([
-    {
-      scope: "platform",
-      name: "Game discovery lander",
-      description: "The page shape we ship for game launches: hero, trust, four games, bonus, steps and FAQ.",
-      category: "Game launch",
-      accent: "#c8a24a",
-      placeholders: gamePlaceholders,
-      status: "active",
-      createdBy: admin.id,
-      document: doc([
-        blk("hero", {
-          eyebrow: "{{brand}}",
-          title: "Play {{game_name}} and collect trophies on every spin",
-          subtitle: "Claim {{bonus_amount}} plus {{free_spins}} free spins when you join today.",
-          primary: { label: "Claim {{bonus_amount}}", href: "{{cta_link}}", style: "solid" },
-          secondary: { label: "See how it works", href: "#how-it-works", style: "outline" },
-          badges: ["18+", "Licensed", "Responsible play"],
-        }),
-        blk("trust-strip", {}),
-        blk("cards-grid", {
-          title: "More games like {{game_name}}",
-          columns: "3",
-          cards: [
-            { image: null, icon: "trophy", title: "{{game_name}}", text: "Collect trophies on every round.", ctaLabel: "Play", ctaHref: "{{cta_link}}" },
-            { image: null, icon: "spark", title: "Lucky Streak", text: "Gem multipliers and a 4,000x top payout.", ctaLabel: "Play", ctaHref: "{{cta_link}}" },
-            { image: null, icon: "gift", title: "Treasure Bay", text: "Pearl bonuses in every chest.", ctaLabel: "Play", ctaHref: "{{cta_link}}" },
-          ],
-        }),
-        blk("bonus-card", {
-          brand: "{{brand}}",
-          headline: "{{bonus_amount}}",
-          subline: "+ {{free_spins}} free spins",
-          freeSpins: "{{free_spins}}",
-          cta: { label: "Claim bonus", href: "{{cta_link}}", style: "solid" },
-        }),
-        blk("steps", {}),
-        blk("faq", {}),
-        blk("cta-banner", {
-          title: "Start with {{brand}} today",
-          text: "{{bonus_amount}} and {{free_spins}} free spins are waiting.",
-          primary: { label: "Join free", href: "{{cta_link}}", style: "solid" },
-        }),
-      ]),
-    },
-    {
-      scope: "platform",
-      name: "Cash-out and wallet lander",
-      description: "For the wallet and redemption story: balances, payout timing and trust.",
-      category: "Rewards",
-      accent: "#7fb3d5",
-      placeholders: [
-        { key: "brand", label: "Brand name", kind: "text", defaultValue: "Trofēo Reward" },
-        { key: "payout_window", label: "Payout window", kind: "text", defaultValue: "24 hours" },
-        { key: "cta_link", label: "Button link", kind: "link", defaultValue: "/join" },
+  const walletDocument = doc([
+    blk("hero", {
+      eyebrow: "Rewards Wallet",
+      headline: "Your trophy balance in plain sight",
+      subheadline:
+        "See what you have collected, what each tier is worth, and how quickly redemptions settle.",
+      primaryLabel: "View Bonus Terms",
+      primaryHref: "/bonus-terms",
+      secondaryLabel: "Back to Home",
+      secondaryHref: "/",
+      layout: "centered",
+      align: "center",
+      theme: "dark",
+    }),
+    blk("animated-counter", {
+      heading: "Live wallet metrics",
+      items: [
+        { value: "50,000+", label: "Rewards redeemed", note: "Verified payouts" },
+        { value: "14 min", label: "Median e-wallet speed", note: "Last 30 days" },
+        { value: "99.4%", label: "Same-day fulfillment", note: "Audited monthly" },
       ],
-      status: "active",
-      createdBy: admin.id,
-      document: doc([
-        blk("hero", {
-          eyebrow: "Rewards",
-          title: "Your trophies, paid out in {{payout_window}}",
-          subtitle: "{{brand}} keeps one wallet for every game and every reward.",
-          primary: { label: "Open my wallet", href: "{{cta_link}}", style: "solid" },
-          height: "compact",
-          badges: [],
-        }),
-        blk("rich-text", { heading: "One balance, every game", body: "Trophies from slots, live tables and promotions all land in the same wallet.\n\n- No minimum redemption\n- Codes delivered by email\n- Support answers within a day" }),
-        blk("steps", {}),
-        blk("payment-strip", {}),
-        blk("faq", {}),
-        blk("cta-banner", { title: "Redeem in three taps", primary: { label: "Go to my wallet", href: "{{cta_link}}", style: "solid" } }),
-      ]),
-    },
-    {
-      scope: "platform",
-      name: "Reward claim lander",
-      description: "A short, urgent claim page for a single reward with a countdown.",
-      category: "Promotion",
-      accent: "#e0a4a4",
-      placeholders: [
-        { key: "reward_name", label: "Reward name", kind: "text", defaultValue: "$50 gift card" },
-        { key: "trophy_cost", label: "Trophy cost", kind: "number", defaultValue: "5000" },
-        { key: "cta_link", label: "Button link", kind: "link", defaultValue: "/join" },
-      ],
-      status: "active",
-      createdBy: admin.id,
-      document: doc([
-        blk("promo-banner", {
-          headline: "{{reward_name}} for {{trophy_cost}} trophies",
-          offer: "Limited stock this week",
-          code: "CLAIM",
-          cta: { label: "Claim now", href: "{{cta_link}}", style: "solid" },
-        }),
-        blk("hero", {
-          eyebrow: "Reward claim",
-          title: "{{reward_name}}, yours for {{trophy_cost}} trophies",
-          subtitle: "Reserve it now and we will email the code within 24 hours.",
-          primary: { label: "Claim {{reward_name}}", href: "{{cta_link}}", style: "solid" },
-          height: "compact",
-          badges: [],
-        }),
-        blk("countdown", { title: "This reward leaves the shelf soon" }),
-        blk("steps", {}),
-        blk("faq", {}),
-        blk("cta-banner", { title: "Do not lose it", primary: { label: "Claim now", href: "{{cta_link}}", style: "solid" } }),
-      ]),
-    },
+    }),
+    blk("payment-strip", {}),
+    blk("cta-banner", {
+      eyebrow: "Instant Redemption",
+      heading: "Ready to put your trophies to work?",
+      body: "Review eligible games and transparent bonus rules before claiming.",
+      buttonLabel: "Read Bonus Terms",
+      buttonHref: "/bonus-terms",
+      tone: "brand",
+    }),
   ]);
 
-  const sample = await readFile(path.join(process.cwd(), "public", "seed", "sample-lander.html"));
+  const wallet = await createPage({
+    siteId: site.id,
+    title: "Rewards Wallet",
+    slug: "/rewards/wallet",
+    document: walletDocument,
+    actor,
+    seo: {
+      metaTitle: "Rewards Wallet - Trofeo Reward",
+      metaDescription: "Track trophies, check payout speeds, and redeem verified rewards.",
+      noindex: false,
+    },
+  });
+  await publishPage(site.id, wallet.id, actor, { note: "Wallet launch", source: "manual" });
+
+  const termsDocument = doc([
+    blk("table-of-contents", {
+      heading: "Bonus terms sections",
+      items: [
+        { label: "Welcome Offer Rules", anchor: "#welcome-rules" },
+        { label: "Frequently Asked Questions", anchor: "#faq" },
+      ],
+    }),
+    blk("rich-text", {
+      width: "normal",
+      html: "<h2 id=\"welcome-rules\">Welcome bonus terms</h2><p>The welcome bonus matches 100% of your first deposit up to $200 plus 50 free spins on Coin Blitz.</p><h3>Wagering contribution</h3><ul><li>Slots contribute 100% toward the 35x bonus requirement.</li><li>Table and live dealer titles contribute 10%.</li><li>Bonus funds expire 7 days after credit and free spins expire after 48 hours.</li></ul>",
+    }),
+    blk("faq", {
+      eyebrow: "Terms FAQ",
+      heading: "Common bonus term questions",
+      emitJsonLd: "false",
+      items: [
+        {
+          question: "Is the welcome offer withdrawable cash?",
+          answer:
+            "Bonus funds convert to withdrawable cash once the 35x wagering requirement is completed within 7 days.",
+        },
+        {
+          question: "What is the maximum cashout on the welcome offer?",
+          answer: "Winnings converted from the welcome bonus are capped at $2,000.",
+        },
+      ],
+    }),
+    blk("responsible-gaming", {}),
+  ]);
+
+  const terms = await createPage({
+    siteId: site.id,
+    title: "Bonus Terms",
+    slug: "/bonus-terms",
+    document: termsDocument,
+    actor,
+    seo: {
+      metaTitle: "Bonus Terms - Trofeo Reward",
+      metaDescription: "Full wagering, game weighting, expiry, and cashout rules.",
+      noindex: false,
+    },
+  });
+  await publishPage(site.id, terms.id, actor, { note: "Terms launch", source: "manual" });
+
+  const curated = builtInTemplates();
+  await db.insert(templates).values(
+    curated.map((tpl) => ({
+      siteId: null,
+      name: tpl.name,
+      description: tpl.description,
+      category: tpl.category,
+      document: tpl.document,
+      createdBy: admin.id,
+    })),
+  );
+
+  const sampleHtml = await readFile(
+    path.join(process.cwd(), "public", "seed", "sample-lander.html"),
+    "utf8",
+  );
   await createImportJob({
     siteId: site.id,
     filename: "neon-fruits-lander.html",
-    bytes: sample,
-    actor: await seedActor(editor),
+    html: sampleHtml,
+    actor: editorActor,
   });
-
-  await db.insert(platformSettings).values([
-    { key: "platform.name", value: "Trofēo Pages", isSecret: false, updatedBy: admin.id },
-    { key: "limits.imports_per_day", value: 20, isSecret: false, updatedBy: admin.id },
-    { key: "limits.publish_per_hour", value: 30, isSecret: false, updatedBy: admin.id },
-    { key: "limits.max_domains_per_site", value: 10, isSecret: false, updatedBy: admin.id },
-    { key: "email.from", value: "pages@trofeo.example", isSecret: false, updatedBy: admin.id },
-  ]);
-
-  await enqueue("invite.sweep", {}, { dedupeKey: "invite.sweep:daily", runAt: new Date(Date.now() + 60_000) });
 }

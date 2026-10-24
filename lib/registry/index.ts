@@ -29,12 +29,32 @@ export const BLOCKS: Record<string, BlockDefinition> = Object.fromEntries(
 export const GROUPS: { key: ComponentGroup; label: string; description: string }[] = [
   { key: "site-frame", label: "Site frame", description: "Edited once per site: header, footer, action dock." },
   { key: "conversion", label: "Hero and conversion", description: "First screen and calls to action." },
-  { key: "money", label: "Money and trust", description: "Bonus terms, comparisons and licence badges." },
+  { key: "money", label: "Money and trust", description: "Bonus terms, comparisons and license badges." },
   { key: "content", label: "Content", description: "Copy, media, social proof and answers." },
-  { key: "utility", label: "Utilities", description: "Spacing and rules." },
+  { key: "utility", label: "Utilities", description: "Spacing, dividers, raw HTML and sandboxed embeds." },
 ];
 
-export const SITE_FRAME_ALIASES = siteFrameBlocks.map((block) => block.alias);
+export type ComponentSpec = BlockDefinition & { type: string; label: string };
+
+export const COMPONENT_LIST: ComponentSpec[] = REGISTRY_LIST.map((block) => ({
+  ...block,
+  type: block.alias,
+  label: block.name,
+}));
+
+export const COMPONENT_MAP: Record<string, ComponentSpec> = Object.fromEntries(
+  COMPONENT_LIST.map((block) => [block.type, block]),
+);
+
+export const GROUP_LABELS: Record<ComponentGroup, string> = {
+  "site-frame": "Site frame",
+  conversion: "Hero and conversion",
+  money: "Money and trust",
+  content: "Content",
+  utility: "Utilities",
+};
+
+export const SITE_FRAME_ALIASES = ["site-header", "site-footer", "sticky-cta-dock"];
 
 export function getBlock(alias: string): BlockDefinition | undefined {
   return BLOCKS[alias];
@@ -43,6 +63,112 @@ export function getBlock(alias: string): BlockDefinition | undefined {
 export function isBlockAvailable(alias: string): boolean {
   const block = BLOCKS[alias];
   return !!block && !block.deprecated;
+}
+
+export function documentUsesAdminBlocks(doc: PageDocument | null | undefined): string[] {
+  if (!doc) return [];
+  const used = new Set<string>();
+  for (const node of doc.content ?? []) {
+    const def = BLOCKS[node.type];
+    if (def?.adminOnly) {
+      used.add(def.alias);
+    }
+  }
+  return [...used];
+}
+
+export type ExtractedPlacement = {
+  blockId: string;
+  blockAlias: string;
+  blockType: string;
+  fieldPath: string;
+  label: string;
+  href: string;
+  url: string;
+  trackingId: string;
+};
+
+function makePlacement(
+  blockId: string,
+  alias: string,
+  fieldPath: string,
+  label: string,
+  href: string,
+): ExtractedPlacement {
+  return {
+    blockId,
+    blockAlias: alias,
+    blockType: alias,
+    fieldPath,
+    label,
+    href,
+    url: href,
+    trackingId: `${blockId}:${fieldPath}`,
+  };
+}
+
+export function collectTrackingPlacements(doc: PageDocument | null | undefined): ExtractedPlacement[] {
+  const placements: ExtractedPlacement[] = [];
+  if (!doc) return placements;
+  for (const node of doc.content ?? []) {
+    const def = BLOCKS[node.type];
+    if (!def) continue;
+    const blockId = typeof node.props?.id === "string" ? node.props.id : "";
+    for (const field of def.fields) {
+      const val = node.props?.[field.key];
+      if (field.type === "link" && val && typeof val === "object") {
+        const link = val as { label?: string; href?: string };
+        if (link.label && link.href) {
+          placements.push(
+            makePlacement(blockId, def.alias, field.key, String(link.label), String(link.href)),
+          );
+        }
+      } else if (field.type === "repeater" && Array.isArray(val)) {
+        val.forEach((item, index) => {
+          if (!item || typeof item !== "object") return;
+          const record = item as Record<string, unknown>;
+          for (const sub of field.fields ?? []) {
+            if (sub.type === "link" && record[sub.key] && typeof record[sub.key] === "object") {
+              const link = record[sub.key] as { label?: string; href?: string };
+              if (link.label && link.href) {
+                placements.push(
+                  makePlacement(
+                    blockId,
+                    def.alias,
+                    `${field.key}[${index}].${sub.key}`,
+                    String(link.label),
+                    String(link.href),
+                  ),
+                );
+              }
+            }
+          }
+          if (typeof record.ctaLabel === "string" && record.ctaLabel && typeof record.ctaHref === "string") {
+            placements.push(
+              makePlacement(
+                blockId,
+                def.alias,
+                `${field.key}[${index}].ctaHref`,
+                record.ctaLabel,
+                record.ctaHref,
+              ),
+            );
+          } else if (typeof record.label === "string" && record.label && typeof record.href === "string") {
+            placements.push(
+              makePlacement(
+                blockId,
+                def.alias,
+                `${field.key}[${index}].href`,
+                record.label,
+                record.href,
+              ),
+            );
+          }
+        });
+      }
+    }
+  }
+  return placements;
 }
 
 export type ValidationResult =
@@ -91,8 +217,12 @@ export function validateDocument(input: unknown): ValidationResult {
 
   const rootProps = z
     .looseObject({
-      contentWidth: z.enum(["narrow", "default", "wide"]).catch(DEFAULT_ROOT_PROPS.contentWidth),
-      background: z.enum(["default", "surface", "dark"]).catch(DEFAULT_ROOT_PROPS.background),
+      contentWidth: z
+        .enum(["narrow", "default", "wide"])
+        .catch(DEFAULT_ROOT_PROPS.contentWidth ?? "default"),
+      background: z
+        .enum(["default", "surface", "dark"])
+        .catch(DEFAULT_ROOT_PROPS.background ?? "default"),
       hideHeader: z.coerce.boolean().catch(false),
       hideFooter: z.coerce.boolean().catch(false),
       hideDock: z.coerce.boolean().catch(false),
@@ -101,7 +231,11 @@ export function validateDocument(input: unknown): ValidationResult {
 
   const document: PageDocument = {
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
-    root: { props: rootProps.success ? (rootProps.data as PageDocument["root"]["props"]) : { ...DEFAULT_ROOT_PROPS } },
+    root: {
+      props: rootProps.success
+        ? (rootProps.data as PageDocument["root"]["props"])
+        : { ...DEFAULT_ROOT_PROPS },
+    },
     content,
     ...(raw.zones && typeof raw.zones === "object" ? { zones: raw.zones } : {}),
   };
@@ -110,7 +244,11 @@ export function validateDocument(input: unknown): ValidationResult {
 }
 
 function emptyDoc(): PageDocument {
-  return { schemaVersion: DOCUMENT_SCHEMA_VERSION, root: { props: { ...DEFAULT_ROOT_PROPS } }, content: [] };
+  return {
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
+    root: { props: { ...DEFAULT_ROOT_PROPS } },
+    content: [],
+  };
 }
 
 function resolveFields(
@@ -144,7 +282,10 @@ export function resolveDocumentMedia(doc: PageDocument, media: Map<string, Resol
     content: (doc.content ?? []).map((node) => {
       const definition = BLOCKS[node.type];
       if (!definition) return node;
-      return { ...node, props: resolveFields(definition.fields, node.props, media) as BlockNode["props"] };
+      return {
+        ...node,
+        props: resolveFields(definition.fields, node.props, media) as BlockNode["props"],
+      };
     }),
   };
 }
@@ -186,12 +327,13 @@ export function defaultPropsFor(alias: string): Record<string, unknown> {
 
 export function searchCatalog(
   query: string,
-  options: { excludeSiteFrame?: boolean; includeDeprecated?: boolean } = {},
+  options: { excludeSiteFrame?: boolean; includeDeprecated?: boolean; allowAdminBlocks?: boolean } = {},
 ): BlockDefinition[] {
   const q = query.trim().toLowerCase();
   return REGISTRY_LIST.filter((block) => {
     if (!options.includeDeprecated && block.deprecated) return false;
     if (options.excludeSiteFrame && SITE_FRAME_ALIASES.includes(block.alias)) return false;
+    if (options.allowAdminBlocks === false && block.adminOnly) return false;
     if (!q) return true;
     return (
       block.name.toLowerCase().includes(q) ||
@@ -211,4 +353,6 @@ export const REGISTRY_STATS = {
 
 export const WAVE_OF = (block: BlockDefinition) => block.wave ?? 1;
 
-export type { BlockDefinition, FieldDef };
+export type { BlockDefinition, ComponentGroup, FieldDef, ResolvedMedia };
+export type ComponentDefinition = BlockDefinition;
+export type FieldSpec = FieldDef;

@@ -20,7 +20,7 @@ import { assignRole, banAccount, provisionAccount, unbanAccount } from "@/lib/au
 import { signedInHeaders } from "./support/auth";
 import { adminActor, editorActor, viewerActor } from "./support/actor";
 
-describe("permission catalogue", () => {
+describe("permission catalog", () => {
   it("has unique keys and every system role only names real ones", () => {
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
     for (const role of SYSTEM_ROLES) {
@@ -29,7 +29,7 @@ describe("permission catalogue", () => {
     }
   });
 
-  it("keeps the admin role on the whole catalogue, including keys added later", async () => {
+  it("keeps the admin role on the whole catalog, including keys added later", async () => {
     await ensureDb();
     const admin = await getRoleByKey("admin");
     expect(admin).not.toBeNull();
@@ -155,11 +155,11 @@ describe("custom roles", () => {
       name: `Marketing ${Date.now()}`,
       description: "Reads pages and manages templates",
       rank: 20,
-      permissionKeys: ["page.view", "template.view", "template.manage"],
+      permissionKeys: ["page.view", "template.view", "template.create"],
       actorId: null,
     });
     expect(role.isSystem).toBe(false);
-    expect((await rolePermissionKeys(role.id)).sort()).toEqual(["page.view", "template.manage", "template.view"]);
+    expect((await rolePermissionKeys(role.id)).sort()).toEqual(["page.view", "template.create", "template.view"]);
 
     await setRolePermissions(role.id, ["page.view"], null);
     expect(await rolePermissionKeys(role.id)).toEqual(["page.view"]);
@@ -176,8 +176,8 @@ describe("custom roles", () => {
   });
 });
 
-describe("catalogue sync", () => {
-  it("is idempotent", async () => {
+describe("catalog sync", () => {
+  it("is repeat-safe", async () => {
     await ensureDb();
     const before = await listRoles();
     await syncRbacCatalog();

@@ -1,236 +1,428 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Puck, type Data } from "@puckeditor/core";
 import "@puckeditor/core/puck.css";
-import type { PageDocument, SiteTheme } from "@/lib/documents";
-import { DOCUMENT_SCHEMA_VERSION, DEFAULT_ROOT_PROPS } from "@/lib/documents";
-import type { ResolvedMedia } from "@/lib/media/refs";
-import { primeMedia } from "@/lib/media/refs";
-import { buildPuckConfig } from "./puck-config";
+import { buildEditorConfig, type MediaOption } from "./puck-config";
+import type { DocumentMeta, SiteTheme } from "@/lib/documents";
 import {
-  publishAction,
-  publishGlobalsAction,
+  publishPageAction,
   saveDraftAction,
-  saveGlobalsDraftAction,
+  saveGlobalAction,
+  schedulePublishAction,
 } from "@/lib/actions/pages";
+import { fromPuckData } from "@/lib/puck-data";
+import {
+  adminBadgeVariants,
+  adminButtonVariants,
+  adminInputClass,
+  adminLabelClass,
+} from "@/lib/theme-classes";
 
-export type EditorScope = "page" | "navigation" | "footer" | "defaults";
+type Mode =
+  | {
+      kind: "page";
+      pageId: string;
+      slug: string;
+      status: string;
+      publishedVersionNumber: number | null;
+      scheduledPublishAt: string | null;
+    }
+  | {
+      kind: "global";
+      globalKind: "navigation" | "footer" | "defaults";
+      label: string;
+    };
 
-type Props = {
+export function PageEditor({
+  siteId,
+  siteName,
+  mode,
+  initialTitle,
+  initialMeta,
+  initialData,
+  initialLockVersion,
+  theme,
+  media,
+  canEdit,
+  canPublish,
+  allowAdminBlocks,
+  previewUrl,
+}: {
   siteId: string;
   siteName: string;
-  pageId: string;
-  title: string;
-  slug: string;
-  status: string;
-  lockVersion: number;
-  document: PageDocument;
+  mode: Mode;
+  initialTitle: string;
+  initialMeta: DocumentMeta;
+  initialData: Data;
+  initialLockVersion: number;
   theme: SiteTheme;
-  media: ResolvedMedia[];
-  scope: EditorScope;
-  previewHref: string | null;
-  historyHref?: string;
+  media: MediaOption[];
+  canEdit: boolean;
   canPublish: boolean;
-  publishedAt?: string | null;
-};
-
-function toDocument(data: Partial<Data>): PageDocument {
-  return {
-    schemaVersion: DOCUMENT_SCHEMA_VERSION,
-    root: { props: { ...DEFAULT_ROOT_PROPS, ...(data.root?.props as object) } },
-    content: (data.content ?? []).map((node) => ({
-      type: node.type,
-      props: node.props as PageDocument["content"][number]["props"],
-    })),
-  };
-}
-
-export function PageEditor(props: Props) {
+  allowAdminBlocks: boolean;
+  previewUrl: string;
+}) {
   const router = useRouter();
-  const [media, setMedia] = useState<ResolvedMedia[]>(props.media);
-  const [lockVersion, setLockVersion] = useState(props.lockVersion);
+  const dataRef = useRef<Data>(initialData);
+  const [lockVersion, setLockVersion] = useState<number>(initialLockVersion);
+  const [title, setTitle] = useState<string>(initialTitle);
+  const [slug, setSlug] = useState<string>(mode.kind === "page" ? mode.slug : "");
+  const [meta, setMeta] = useState<DocumentMeta>(initialMeta);
+  const [mediaList, setMediaList] = useState<MediaOption[]>(media);
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishNote, setPublishNote] = useState("");
+  const [scheduleAt, setScheduleAt] = useState(
+    mode.kind === "page" && mode.scheduledPublishAt
+      ? mode.scheduledPublishAt.slice(0, 16)
+      : "",
+  );
   const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState<null | "save" | "publish">(null);
-  const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const latest = useRef<Partial<Data>>(props.document as unknown as Partial<Data>);
-
-  useEffect(() => {
-    primeMedia(media);
-  }, [media]);
-
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-
-  const onUploaded = useCallback((asset: ResolvedMedia) => {
-    setMedia((current) => [...current.filter((item) => item.id !== asset.id), asset]);
-  }, []);
+  const [feedback, setFeedback] = useState<{
+    tone: "ok" | "error" | "conflict";
+    text: string;
+  } | null>(null);
+  const [pending, startTransition] = useTransition();
 
   const config = useMemo(
     () =>
-      buildPuckConfig({
-        siteId: props.siteId,
-        theme: props.theme,
-        media,
-        onUploaded,
-        scope: props.scope === "page" ? "page" : "site-frame",
+      buildEditorConfig({
+        theme,
+        siteId,
+        media: mediaList,
+        allowAdminBlocks,
+        onUploaded: (created) => setMediaList((prev) => [created, ...prev]),
       }),
-    [props.siteId, props.theme, props.scope, media, onUploaded],
+    [theme, siteId, mediaList, allowAdminBlocks],
   );
 
-  const save = useCallback(
-    async (data: Partial<Data>): Promise<boolean> => {
-      setBusy("save");
-      setNotice(null);
-      const document = toDocument(data);
-      const result =
-        props.scope === "page"
-          ? await saveDraftAction({ siteId: props.siteId, pageId: props.pageId, document, lockVersion })
-          : await saveGlobalsDraftAction({ siteId: props.siteId, kind: props.scope, document, lockVersion });
-
-      setBusy(null);
-      if (!result.ok) {
-        setNotice({ tone: "error", text: result.error ?? "Could not save." });
-        return false;
+  const persistDraft = async (): Promise<number | null> => {
+    const document = fromPuckData(dataRef.current);
+    if (mode.kind === "global") {
+      const res = await saveGlobalAction({
+        siteId,
+        kind: mode.globalKind,
+        document,
+        lockVersion,
+      });
+      if (!res.ok) {
+        setFeedback({
+          tone: res.conflict ? "conflict" : "error",
+          text: res.error ?? "Could not save.",
+        });
+        return null;
       }
-      if (result.lockVersion !== undefined) setLockVersion(result.lockVersion);
+      const next = res.lockVersion ?? lockVersion + 1;
+      setLockVersion(next);
       setDirty(false);
-      setNotice({ tone: "ok", text: result.message ?? "Saved" });
-      return true;
-    },
-    [lockVersion, props.pageId, props.scope, props.siteId],
-  );
-
-  const publish = useCallback(async () => {
-    if (dirty) {
-      const saved = await save(latest.current);
-      if (!saved) return;
+      setFeedback({ tone: "ok", text: res.message ?? "Saved." });
+      return next;
     }
-    setBusy("publish");
-    setNotice(null);
-    const result =
-      props.scope === "page"
-        ? await publishAction({ siteId: props.siteId, pageId: props.pageId })
-        : await publishGlobalsAction({ siteId: props.siteId, kind: props.scope });
-    setBusy(null);
-    if (!result.ok) {
-      setNotice({ tone: "error", text: result.error ?? "Could not publish." });
-      return;
-    }
-    setNotice({ tone: "ok", text: result.message ?? "Published" });
-    router.refresh();
-  }, [dirty, props.pageId, props.scope, props.siteId, router, save]);
 
-  const statusLabel =
-    props.scope === "page"
-      ? props.status === "published"
-        ? "Published"
-        : props.status === "archived"
-          ? "Archived"
-          : "Draft"
-      : props.publishedAt
-        ? "Published"
-        : "Draft";
+    const res = await saveDraftAction({
+      siteId,
+      pageId: mode.pageId,
+      title,
+      seo: meta,
+      document,
+      lockVersion,
+    });
+    if (!res.ok) {
+      setFeedback({
+        tone: res.conflict ? "conflict" : "error",
+        text: res.error ?? "Could not save draft.",
+      });
+      return null;
+    }
+    const next = res.lockVersion ?? lockVersion + 1;
+    setLockVersion(next);
+    setDirty(false);
+    setFeedback({ tone: "ok", text: "Draft saved." });
+    return next;
+  };
+
+  const backHref =
+    mode.kind === "page"
+      ? `/admin/sites/${siteId}/pages/${mode.pageId}`
+      : `/admin/sites/${siteId}/globals`;
 
   return (
-    <div className="flex h-screen flex-col bg-paper">
-      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-4 py-2.5">
-        <Link
-          href={`/admin/sites/${props.siteId}${props.scope === "page" ? "/pages" : "/globals"}`}
-          className="flex items-center gap-1.5 text-[12px] font-medium text-slate-500 hover:text-ink-900"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M11 5 4 12l7 7 1.4-1.4L7.8 13H20v-2H7.8l4.6-5.6z" />
-          </svg>
-          {props.siteName}
-        </Link>
-        <span className="text-slate-300">/</span>
-        <div className="min-w-0">
-          <p className="truncate text-[13px] font-semibold text-ink-900">{props.title}</p>
-          <p className="truncate font-mono text-[10px] text-slate-400">
-            {props.scope === "page" ? `/${props.slug}` : `site ${props.scope}`}
-          </p>
-        </div>
-        <span
-          className={`badge ${
-            statusLabel === "Published" ? "badge-green" : statusLabel === "Archived" ? "badge-gray" : "badge-amber"
-          }`}
-        >
-          {statusLabel}
-        </span>
-        {dirty ? <span className="badge badge-blue">Unsaved changes</span> : null}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {notice ? (
-            <span
-              className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
-                notice.tone === "ok" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-              }`}
-              role="status"
-            >
-              {notice.text}
-            </span>
-          ) : null}
-          {props.historyHref ? (
-            <Link href={props.historyHref} className="btn-admin btn-admin-secondary !py-1.5 !text-[12px]">
-              History
-            </Link>
-          ) : null}
-          {props.previewHref ? (
-            <a
-              href={props.previewHref}
-              target="_blank"
-              rel="noreferrer"
-              className="btn-admin btn-admin-secondary !py-1.5 !text-[12px]"
-            >
-              Preview
-            </a>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void save(latest.current)}
-            className="btn-admin btn-admin-secondary !py-1.5 !text-[12px]"
-            disabled={busy !== null}
+    <div className="flex min-h-screen flex-col bg-slate-100">
+      <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={backHref}
+            className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
           >
-            {busy === "save" ? "Saving…" : "Save draft"}
-          </button>
-          {props.canPublish ? (
+            Back
+          </Link>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-slate-950">{siteName}</span>
+              <span className="text-slate-300">/</span>
+              <span className="font-medium text-slate-700">
+                {mode.kind === "page" ? title : mode.label}
+              </span>
+              {mode.kind === "page" ? (
+                <span
+                  className={adminBadgeVariants({
+                    tone: mode.status === "published" ? "green" : "amber",
+                  })}
+                >
+                  {mode.status}
+                  {mode.publishedVersionNumber ? ` v${mode.publishedVersionNumber}` : ""}
+                </span>
+              ) : (
+                <span className={adminBadgeVariants({ tone: "blue" })}>site-wide</span>
+              )}
+              {dirty ? <span className="text-[11px] text-amber-700">unsaved edits</span> : null}
+            </div>
+            {feedback ? (
+              <p
+                className={`mt-0.5 text-[11px] ${
+                  feedback.tone === "ok" ? "text-emerald-700" : "text-red-600"
+                }`}
+              >
+                {feedback.text}{" "}
+                {feedback.tone === "conflict" ? (
+                  <button
+                    type="button"
+                    className="font-semibold underline"
+                    onClick={() => router.refresh()}
+                  >
+                    Reload latest draft
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {mode.kind === "page" ? (
             <button
               type="button"
-              onClick={() => void publish()}
-              className="btn-admin btn-admin-accent !py-1.5 !text-[12px]"
-              disabled={busy !== null}
+              className={adminButtonVariants({ tone: "secondary", size: "sm" })}
+              onClick={() => setMetaOpen((prev) => !prev)}
             >
-              {busy === "publish" ? "Publishing…" : props.scope === "page" ? "Publish" : "Publish to site"}
+              SEO & page settings
+            </button>
+          ) : null}
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={adminButtonVariants({ tone: "secondary", size: "sm" })}
+          >
+            Preview
+          </a>
+          {canEdit ? (
+            <button
+              type="button"
+              disabled={pending}
+              className={adminButtonVariants({
+                tone: mode.kind === "global" ? "primary" : "secondary",
+                size: "sm",
+              })}
+              onClick={() =>
+                startTransition(async () => {
+                  await persistDraft();
+                })
+              }
+            >
+              {pending ? "Saving..." : mode.kind === "global" ? "Save & apply" : "Save draft"}
+            </button>
+          ) : null}
+          {mode.kind === "page" && canPublish ? (
+            <button
+              type="button"
+              disabled={pending}
+              className={adminButtonVariants({ tone: "primary", size: "sm" })}
+              onClick={() => setPublishOpen((prev) => !prev)}
+            >
+              Publish...
             </button>
           ) : null}
         </div>
       </header>
-      <div className="min-h-0 flex-1">
+
+      {mode.kind === "page" && metaOpen ? (
+        <div className="border-b border-slate-200 bg-slate-50 px-6 py-4 text-xs">
+          <div className="mx-auto grid w-full gap-3 sm:grid-cols-3">
+            <div>
+              <label className={adminLabelClass} htmlFor="ed-title">
+                Page title
+              </label>
+              <input
+                id="ed-title"
+                className={adminInputClass}
+                value={title}
+                onChange={(event) => {
+                  setTitle(event.target.value);
+                  setDirty(true);
+                }}
+              />
+            </div>
+            <div>
+              <label className={adminLabelClass} htmlFor="ed-slug">
+                URL slug (empty = homepage)
+              </label>
+              <input
+                id="ed-slug"
+                className={`${adminInputClass} font-mono`}
+                value={slug}
+                onChange={(event) => {
+                  setSlug(event.target.value);
+                  setDirty(true);
+                }}
+              />
+            </div>
+            <div>
+              <label className={adminLabelClass} htmlFor="ed-canonical">
+                Canonical URL override
+              </label>
+              <input
+                id="ed-canonical"
+                className={adminInputClass}
+                value={meta.canonicalUrl ?? ""}
+                onChange={(event) => {
+                  setMeta({ ...meta, canonicalUrl: event.target.value });
+                  setDirty(true);
+                }}
+                placeholder="https://brand.example/offer"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className={adminLabelClass} htmlFor="ed-desc">
+                Meta description
+              </label>
+              <input
+                id="ed-desc"
+                className={adminInputClass}
+                value={meta.description ?? ""}
+                onChange={(event) => {
+                  setMeta({ ...meta, description: event.target.value });
+                  setDirty(true);
+                }}
+                placeholder="Shown in search results and link previews."
+              />
+            </div>
+            <div className="flex items-end pb-1">
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  className="accent-slate-950"
+                  checked={Boolean(meta.noindex)}
+                  onChange={(event) => {
+                    setMeta({ ...meta, noindex: event.target.checked });
+                    setDirty(true);
+                  }}
+                />
+                Hide from search engines (noindex)
+              </label>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {mode.kind === "page" && publishOpen ? (
+        <div className="border-b border-slate-200 bg-amber-50/70 px-6 py-4 text-xs">
+          <div className="mx-auto flex w-full flex-wrap items-end gap-3">
+            <div className="min-w-56 flex-1">
+              <label className={adminLabelClass} htmlFor="pub-note">
+                Version note (recorded in history)
+              </label>
+              <input
+                id="pub-note"
+                className={adminInputClass}
+                value={publishNote}
+                onChange={(event) => setPublishNote(event.target.value)}
+                placeholder="Updated welcome bonus cap and wagering copy"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={pending}
+              className={adminButtonVariants({ tone: "primary" })}
+              onClick={() =>
+                startTransition(async () => {
+                  const saved = await persistDraft();
+                  if (saved === null) return;
+                  const res = await publishPageAction({
+                    siteId,
+                    pageId: mode.pageId,
+                    note: publishNote,
+                  });
+                  if (!res.ok) {
+                    setFeedback({ tone: "error", text: res.error ?? "Publish failed." });
+                    return;
+                  }
+                  setPublishOpen(false);
+                  setPublishNote("");
+                  setFeedback({ tone: "ok", text: res.message ?? "Published." });
+                  router.refresh();
+                })
+              }
+            >
+              {pending ? "Publishing..." : "Save & publish now"}
+            </button>
+            <div className="flex flex-wrap items-end gap-2 border-l border-amber-200 pl-3">
+              <div>
+                <label className={adminLabelClass} htmlFor="sched-at">
+                  Or schedule for
+                </label>
+                <input
+                  id="sched-at"
+                  type="datetime-local"
+                  className={adminInputClass}
+                  value={scheduleAt}
+                  onChange={(event) => setScheduleAt(event.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                disabled={pending}
+                className={adminButtonVariants({ tone: "secondary" })}
+                onClick={() =>
+                  startTransition(async () => {
+                    const saved = await persistDraft();
+                    if (saved === null) return;
+                    const iso = scheduleAt ? new Date(scheduleAt).toISOString() : null;
+                    const res = await schedulePublishAction({
+                      siteId,
+                      pageId: mode.pageId,
+                      publishAt: iso,
+                    });
+                    setFeedback({
+                      tone: res.ok ? "ok" : "error",
+                      text: res.error ?? res.message ?? "",
+                    });
+                    if (res.ok) router.refresh();
+                  })
+                }
+              >
+                {scheduleAt ? "Schedule" : "Clear schedule"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex-1">
         <Puck
           config={config}
-          data={props.document as unknown as Partial<Data>}
-          height="100%"
-          iframe={{ enabled: false }}
-          onChange={(data) => {
-            latest.current = data as unknown as Partial<Data>;
+          data={initialData}
+          headerPath={previewUrl}
+          overrides={{
+            header: () => <></>,
+          }}
+          onChange={(nextData) => {
+            dataRef.current = nextData;
             setDirty(true);
           }}
-          onPublish={(data) => {
-            latest.current = data as unknown as Partial<Data>;
-            void save(data as unknown as Partial<Data>);
-          }}
-          headerTitle={props.title}
-          headerPath={props.scope === "page" ? `/${props.slug}` : props.scope}
-          dictionary={{ "header-publish": "Save draft" }}
         />
       </div>
     </div>

@@ -41,11 +41,11 @@ export function LiveCountdown({
   }, [target]);
 
   if (!Number.isFinite(target)) {
-    return <p className="text-sm text-[color:var(--site-muted)]">Set a target date to start the timer.</p>;
+    return <p className="text-sm text-site-muted">Set a target date to start the timer.</p>;
   }
 
   if (expired) {
-    return <p className="text-sm font-medium text-[color:var(--site-muted)]">{expiredMessage}</p>;
+    return <p className="text-sm font-medium text-site-muted">{expiredMessage}</p>;
   }
 
   const units = [
@@ -56,22 +56,19 @@ export function LiveCountdown({
   ] as const;
 
   return (
-    <div className="flex items-center gap-2" role="timer" aria-live="off">
+    <div className="flex flex-wrap items-center gap-2" role="timer" aria-live="off">
       {units.map((unit, index) => (
         <div key={unit.key} className="flex items-center gap-2">
-          <div
-            className="min-w-[62px] rounded-[var(--site-radius-sm)] border px-3 py-2 text-center"
-            style={{ borderColor: "var(--site-border)", background: "var(--site-bg)" }}
-          >
-            <p className="font-heading text-xl leading-none tabular-nums" style={{ color: "var(--site-text)" }}>
+          <div className="min-w-16 rounded-site-sm border border-site-border bg-site-bg px-3 py-2 text-center">
+            <p className="font-heading text-xl leading-none text-site-text tabular-nums">
               {remaining ? remaining[unit.key] : "--"}
             </p>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--site-muted)" }}>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-site-muted">
               {unit.label}
             </p>
           </div>
           {index < units.length - 1 ? (
-            <span aria-hidden="true" style={{ color: "var(--site-muted)" }}>
+            <span aria-hidden="true" className="text-site-muted">
               :
             </span>
           ) : null}

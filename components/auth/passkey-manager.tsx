@@ -4,8 +4,19 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 import { removeOwnPasskeyAction } from "@/lib/actions/account";
+import {
+  adminButtonVariants,
+  adminInputClass,
+  adminLabelClass,
+} from "@/lib/theme-classes";
 
-type PasskeyRow = { id: string; name: string | null; createdAt: string; deviceType: string; backedUp: boolean };
+type PasskeyRow = {
+  id: string;
+  name: string | null;
+  createdAt: string;
+  deviceType: string;
+  backedUp: boolean;
+};
 
 export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
   const router = useRouter();
@@ -38,21 +49,23 @@ export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
     <div className="space-y-3">
       <ul className="space-y-1.5">
         {passkeys.length === 0 ? (
-          <li className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-[12px] text-slate-500">
+          <li className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-[12px] text-slate-500">
             No passkeys yet. Add one to sign in without typing a password.
           </li>
         ) : (
           passkeys.map((passkey) => (
             <li
               key={passkey.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"
             >
               <div>
-                <p className="text-[13px] font-medium text-ink-900">{passkey.name || "Unnamed passkey"}</p>
+                <p className="text-[13px] font-medium text-slate-950">
+                  {passkey.name || "Unnamed passkey"}
+                </p>
                 <p className="text-[11px] text-slate-400">
                   {passkey.deviceType}
-                  {passkey.backedUp ? " · synced" : ""} · added{" "}
-                  {new Date(passkey.createdAt).toLocaleDateString("en-GB", {
+                  {passkey.backedUp ? " | synced" : ""} | added{" "}
+                  {new Date(passkey.createdAt).toLocaleDateString("en-US", {
                     day: "numeric",
                     month: "short",
                     year: "numeric",
@@ -72,13 +85,13 @@ export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
         )}
       </ul>
       <div className="flex flex-wrap items-end gap-2">
-        <div className="min-w-[180px] flex-1">
-          <label className="label" htmlFor="passkey-name">
+        <div className="min-w-44 flex-1">
+          <label className={adminLabelClass} htmlFor="passkey-name">
             Name this device
           </label>
           <input
             id="passkey-name"
-            className="input"
+            className={adminInputClass}
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="MacBook, phone, security key"
@@ -86,11 +99,11 @@ export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
         </div>
         <button
           type="button"
-          className="btn-admin btn-admin-primary"
+          className={adminButtonVariants({ tone: "primary" })}
           disabled={busy}
-          onClick={register}
+          onClick={() => void register()}
         >
-          {busy ? "Follow your device…" : "Add a passkey"}
+          {busy ? "Follow your device..." : "Add a passkey"}
         </button>
       </div>
       {error ? <p className="text-[11px] text-red-600">{error}</p> : null}

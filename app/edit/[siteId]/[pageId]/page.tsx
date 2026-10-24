@@ -1,47 +1,59 @@
-import { notFound, redirect } from "next/navigation";
-import { requireActor, can } from "@/lib/auth/session";
+import { notFound } from "next/navigation";
+import { can, requireView } from "@/lib/auth/session";
 import { getSite } from "@/lib/sites";
-import { getPage } from "@/lib/pages";
-import { mediaMapFor } from "@/lib/media";
+import { getPage, getVersionById } from "@/lib/pages";
+import { listSiteMedia, mediaPublicUrl } from "@/lib/media";
+import { toPuckData } from "@/lib/puck-data";
 import { PageEditor } from "@/components/editor/page-editor";
-import { withPuckIds } from "@/lib/puck-data";
 
 export const dynamic = "force-dynamic";
 
-export default async function EditPage({
+export default async function EditPageRoute({
   params,
 }: {
   params: Promise<{ siteId: string; pageId: string }>;
 }) {
-  const actor = await requireActor();
   const { siteId, pageId } = await params;
+  const actor = await requireView("page.view", `/edit/${siteId}/${pageId}`);
   const site = await getSite(siteId);
   if (!site) notFound();
   const page = await getPage(siteId, pageId);
   if (!page) notFound();
 
-  if (!can(actor, "editor")) {
-    redirect(`/preview/${siteId}/${page.slug}`);
-  }
+  const [publishedVersion, mediaRows] = await Promise.all([
+    page.publishedVersionId ? getVersionById(siteId, page.publishedVersionId) : null,
+    listSiteMedia(siteId),
+  ]);
 
-  const media = await mediaMapFor(siteId);
+  const media = mediaRows.map((row) => ({
+    id: row.id,
+    label: row.originalName,
+    url: mediaPublicUrl(row),
+    alt: row.altText,
+  }));
 
   return (
     <PageEditor
-      siteId={siteId}
+      siteId={site.id}
       siteName={site.name}
-      pageId={page.id}
-      title={page.title}
-      slug={page.slug}
-      status={page.status}
-      lockVersion={page.lockVersion}
-      document={withPuckIds(page.draftDocument)}
+      mode={{
+        kind: "page",
+        pageId: page.id,
+        slug: page.slug,
+        status: page.status,
+        publishedVersionNumber: publishedVersion?.versionNumber ?? null,
+        scheduledPublishAt: page.scheduledPublishAt?.toISOString() ?? null,
+      }}
+      initialTitle={page.title}
+      initialMeta={page.seo}
+      initialData={toPuckData(page.draftDocument)}
+      initialLockVersion={page.lockVersion}
       theme={site.theme}
-      media={[...media.values()]}
-      scope="page"
-      previewHref={`/preview/${siteId}/${page.slug}`}
-      historyHref={`/admin/sites/${siteId}/pages/${page.id}`}
-      canPublish={can(actor, "editor")}
+      media={media}
+      canEdit={can(actor, "page.edit")}
+      canPublish={can(actor, "page.publish")}
+      allowAdminBlocks={can(actor, "catalog.admin_blocks")}
+      previewUrl={`/preview/${site.id}/${page.id}`}
     />
   );
 }

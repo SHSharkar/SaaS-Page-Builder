@@ -1,109 +1,52 @@
-import Link from "next/link";
-import { listTemplates, placeholdersFor } from "@/lib/templates";
+import { can, requireView } from "@/lib/auth/session";
+import { extractTemplatePlaceholders, listTemplates } from "@/lib/templates";
 import { listSites } from "@/lib/sites";
-import { requireView } from "@/lib/auth/session";
-import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
-import { TemplateCard } from "@/components/admin/template-card";
-
-export const dynamic = "force-dynamic";
+import { EmptyState, PageHeader } from "@/components/admin/ui";
+import { TemplateGallery } from "@/components/admin/templates-client";
 
 export default async function TemplatesPage() {
-  const actor = await requireView("template.view");
-  const [templates, sites] = await Promise.all([
-    listTemplates({ includeStaff: true, userId: actor.user.id }),
-    listSites(),
-  ]);
-  const platform = templates.filter((template) => template.scope === "platform");
-  const staff = templates.filter((template) => template.scope === "staff");
+  const actor = await requireView("template.view", "/admin/templates");
+  const [templates, allSites] = await Promise.all([listTemplates(), listSites()]);
+
+  const activeSites = allSites
+    .filter((entry) => entry.site.status === "active")
+    .map((entry) => ({ id: entry.site.id, name: entry.site.name }));
+
+  const cards = templates.map((tpl) => ({
+    id: tpl.id,
+    siteId: tpl.siteId,
+    name: tpl.name,
+    category: tpl.category,
+    description: tpl.description,
+    placeholders: extractTemplatePlaceholders(tpl.document).map((ph) => ({
+      key: ph.key,
+      label: ph.label,
+      sample: ph.defaultValue,
+    })),
+    sectionCount: tpl.document.content?.length ?? 0,
+  }));
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        eyebrow="Library"
-        title="Templates"
-        description="Curated starting points with fill-in placeholders, plus anything the team has saved. A template is copied — editing a page never changes it."
-        actions={
-          sites[0] ? (
-            <Link href={`/admin/sites/${sites[0].site.id}/pages/new`} className="btn-admin btn-admin-primary">
-              Start from a template
-            </Link>
-          ) : null
-        }
+        eyebrow="Starter layouts"
+        title="Reusable templates"
+        description="Curated landing layouts and saved page blueprints. Applying a template creates an independent draft copy."
       />
-      <div className="space-y-6">
-        <section>
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="text-sm font-semibold text-ink-900">Curated</h2>
-            <p className="text-[11px] text-slate-400">{platform.length} designs maintained by the platform team</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {platform.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={{
-                  id: template.id,
-                  name: template.name,
-                  description: template.description,
-                  category: template.category,
-                  accent: template.accent,
-                  status: template.status,
-                  scope: template.scope,
-                  sections: template.document.content.length,
-                  placeholders: placeholdersFor(template).map((placeholder) => ({
-                    key: placeholder.key,
-                    label: placeholder.label,
-                    defaultValue: placeholder.defaultValue,
-                    kind: placeholder.kind,
-                  })),
-                  updatedAt: relativeTime(template.updatedAt),
-                }}
-                sites={sites.map((row) => ({ id: row.site.id, name: row.site.name }))}
-              />
-            ))}
-            {platform.length === 0 ? (
-              <p className="text-sm text-slate-500">No curated templates yet.</p>
-            ) : null}
-          </div>
-        </section>
-        <section>
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="text-sm font-semibold text-ink-900">Saved by the team</h2>
-            <p className="text-[11px] text-slate-400">Staff templates are private to their author unless shared</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {staff.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={{
-                  id: template.id,
-                  name: template.name,
-                  description: template.description,
-                  category: template.category,
-                  accent: template.accent,
-                  status: template.status,
-                  scope: template.scope,
-                  sections: template.document.content.length,
-                  placeholders: placeholdersFor(template).map((placeholder) => ({
-                    key: placeholder.key,
-                    label: placeholder.label,
-                    defaultValue: placeholder.defaultValue,
-                    kind: placeholder.kind,
-                  })),
-                  updatedAt: relativeTime(template.updatedAt),
-                }}
-                sites={sites.map((row) => ({ id: row.site.id, name: row.site.name }))}
-              />
-            ))}
-            {staff.length === 0 ? (
-              <Panel>
-                <p className="text-sm text-slate-500">
-                  Nothing saved yet. Open any page&apos;s settings and choose “Save as template” to add one here.
-                </p>
-              </Panel>
-            ) : null}
-          </div>
-        </section>
-      </div>
+
+      {cards.length === 0 ? (
+        <EmptyState
+          title="No templates available"
+          description="Save any page as a template from its detail view to populate this gallery."
+        />
+      ) : (
+        <TemplateGallery
+          templates={cards}
+          sites={activeSites}
+          canApply={can(actor, "template.apply")}
+          canManage={can(actor, "template.manage")}
+        />
+      )}
     </div>
   );
 }

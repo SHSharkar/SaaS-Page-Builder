@@ -1,34 +1,62 @@
-import { NextResponse } from "next/server";
-import { can, getActor } from "@/lib/auth/session";
-import { confirmUpload } from "@/lib/media";
+import { can } from "@/lib/auth/permissions";
+import { getActor } from "@/lib/auth/session";
+import { confirmPresignedUpload } from "@/lib/media";
+import { methodNotAllowed, problemFromError, problemResponse } from "@/lib/problem";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request, { params }: { params: Promise<{ siteId: string; mediaId: string }> }) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ siteId: string; mediaId: string }> },
+) {
+  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
   const actor = await getActor();
-  if (!actor) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  if (!can(actor, "editor")) {
-    return NextResponse.json({ error: "Your role cannot upload media." }, { status: 403 });
+  if (!actor) {
+    return problemResponse({
+      status: 401,
+      title: "Authentication required",
+      detail: "Sign in before confirming an upload.",
+      requestId,
+    });
   }
-
-  const { siteId, mediaId } = await params;
-  const body = (await request.json().catch(() => ({}))) as { checksum?: string };
+  if (!can(actor, "media.upload")) {
+    return problemResponse({
+      status: 403,
+      title: "Forbidden",
+      detail: "Your role does not include media.upload.",
+      requestId,
+    });
+  }
 
   try {
-    const asset = await confirmUpload({ siteId, mediaId, actor, expectedChecksum: body.checksum });
-    return NextResponse.json({
-      asset: {
-        id: asset.id,
-        url: asset.publicUrl,
-        alt: asset.altText ?? undefined,
-        width: asset.width,
-        height: asset.height,
+    const { siteId, mediaId } = await params;
+    const { asset, deduplicated } = await confirmPresignedUpload(siteId, mediaId, actor);
+    return Response.json(
+      {
+        asset: {
+          id: asset.id,
+          url: asset.publicUrl,
+          alt: asset.altText ?? "",
+          width: asset.width,
+          height: asset.height,
+        },
+        deduplicated,
       },
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "The upload could not be confirmed." },
-      { status: 400 },
+      { status: 200, headers: { "X-Request-Id": requestId } },
     );
+  } catch (err) {
+    return problemFromError(err, requestId);
   }
+}
+
+export function GET(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
+}
+
+export function PUT(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
+}
+
+export function DELETE(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
 }

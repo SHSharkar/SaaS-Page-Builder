@@ -1,121 +1,133 @@
 import Link from "next/link";
-import { listSites, platformHost } from "@/lib/sites";
-import { requireView } from "@/lib/auth/session";
-import { siteCounts } from "@/lib/sites";
-import { PageHeader, Panel, StatusBadge, EmptyState, relativeTime } from "@/components/admin/ui";
-import { listDeletedSites } from "@/lib/sites";
-import { DeletedSites } from "@/components/admin/deleted-sites";
+import { can, hasRecentStepUp, requireView } from "@/lib/auth/session";
+import { listSites } from "@/lib/sites";
+import { listDeletedSitesForAdmin } from "@/lib/actions/sites";
+import { EmptyState, PageHeader, Panel, StatusBadge } from "@/components/admin/ui";
+import { StepUpNotice } from "@/components/admin/step-up-notice";
+import { DeletedSitesPanel } from "@/components/admin/sites-trash-modal";
+import { adminButtonVariants, adminPanelClass } from "@/lib/theme-classes";
+import type { SiteTheme } from "@/lib/documents";
 
-export const dynamic = "force-dynamic";
+const PALETTE_SWATCH: Record<NonNullable<SiteTheme["palette"]>, string> = {
+  "obsidian-gold": "bg-zinc-950 text-amber-400",
+  "emerald-casino": "bg-emerald-950 text-emerald-300",
+  "midnight-neon": "bg-slate-950 text-violet-300",
+  "ivory-editorial": "bg-stone-100 text-amber-800 border border-stone-300",
+};
 
-export default async function SitesPage() {
-  await requireView("site.view");
-  const sites = await listSites();
-  const counts = await Promise.all(sites.map((row) => siteCounts(row.site.id)));
-  const deleted = await listDeletedSites();
+export default async function SitesIndexPage() {
+  const actor = await requireView("site.view", "/admin/sites");
+  const canRestore = can(actor, "site.restore");
+  const canPurge = can(actor, "site.purge");
+
+  const [sites, deletedRaw, steppedUp] = await Promise.all([
+    listSites(),
+    canRestore || canPurge ? listDeletedSitesForAdmin() : Promise.resolve([]),
+    canRestore || canPurge ? hasRecentStepUp(actor) : Promise.resolve(false),
+  ]);
+
+  const nowMs = Date.now();
+  const deleted = deletedRaw.map((entry) => ({
+    id: entry.site.id,
+    name: entry.site.name,
+    slug: entry.site.slug,
+    deletedAt: entry.site.deletedAt?.toISOString() ?? null,
+    purgeAfter: entry.restorableUntil?.toISOString() ?? null,
+    daysLeft: entry.restorableUntil
+      ? Math.max(0, Math.ceil((entry.restorableUntil.getTime() - nowMs) / 86_400_000))
+      : 0,
+  }));
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        eyebrow="Workspace"
+        eyebrow="Multi-brand directory"
         title="Sites"
-        description="Every site is one brand with its own theme, navigation, footer, pages and hostnames. Publish is always explicit — nothing goes live by accident."
+        description="Each site isolates its pages, versions, global header/footer, media library, and verified domains."
         actions={
-          <Link href="/admin/sites/new" className="btn-admin btn-admin-primary">
-            New site
-          </Link>
+          can(actor, "site.create") ? (
+            <Link href="/admin/sites/new" className={adminButtonVariants({ tone: "primary" })}>
+              + Create site
+            </Link>
+          ) : null
         }
-        breadcrumb={[{ label: "Overview", href: "/admin" }, { label: "Sites" }]}
       />
+
       {sites.length === 0 ? (
         <EmptyState
-          title="No sites yet"
-          description="Create the first site to get a theme, global navigation, footer and a homepage."
+          title="No active sites yet"
+          description="Create your first brand site to get a built-in subdomain, default header and footer, and starter homepage."
           action={
-            <Link href="/admin/sites/new" className="btn-admin btn-admin-accent">
-              Create a site
-            </Link>
+            can(actor, "site.create") ? (
+              <Link href="/admin/sites/new" className={adminButtonVariants({ tone: "primary" })}>
+                Create first site
+              </Link>
+            ) : null
           }
         />
       ) : (
-        <div className="space-y-3">
-          {sites.map((row, index) => {
-            const count = counts[index];
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {sites.map(({ site, primaryDomain, pageCount, publishedCount }) => {
+            const swatch =
+              PALETTE_SWATCH[site.theme.palette ?? "obsidian-gold"] ??
+              PALETTE_SWATCH["obsidian-gold"];
             return (
-              <Panel key={row.site.id} className="overflow-hidden">
-                <div className="flex flex-wrap items-start justify-between gap-4 p-5">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/admin/sites/${row.site.id}`}
-                        className="text-base font-semibold tracking-tight text-ink-900 hover:underline"
-                      >
-                        {row.site.name}
-                      </Link>
-                      <StatusBadge status={row.site.status} />
+              <Link
+                key={site.id}
+                href={`/admin/sites/${site.id}`}
+                className={`${adminPanelClass} flex flex-col justify-between p-5 transition hover:border-slate-300`}
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3">
                       <span
-                        className="h-3.5 w-3.5 rounded-full border border-black/10"
-                        style={{ background: row.site.theme.accent }}
-                        aria-hidden="true"
-                      />
+                        className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg text-sm font-black ${swatch}`}
+                      >
+                        {(site.theme.logoText || site.name).slice(0, 2).toUpperCase()}
+                      </span>
+                      <div>
+                        <h2 className="text-base font-semibold text-slate-950">{site.name}</h2>
+                        <p className="font-mono text-xs text-slate-400">
+                          {primaryDomain ?? site.slug}
+                        </p>
+                      </div>
                     </div>
-                    <p className="mt-1 font-mono text-[11px] text-slate-400">
-                      {platformHost(row.site.slug)} · /{row.site.slug}
-                    </p>
-                    <p className="mt-2 text-xs text-slate-500">
-                      {count.pages} pages · {count.published} live · {count.drafts} drafts · {count.media} images ·{" "}
-                      {count.domains} hostnames
-                    </p>
+                    <StatusBadge status={site.status} />
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/admin/sites/${row.site.id}/pages`}
-                      className="btn-admin btn-admin-secondary !py-1.5 !text-xs"
-                    >
-                      Pages
-                    </Link>
-                    <Link
-                      href={`/admin/sites/${row.site.id}/pages/new`}
-                      className="btn-admin btn-admin-secondary !py-1.5 !text-xs"
-                    >
-                      New page
-                    </Link>
-                    <Link
-                      href={`/admin/sites/${row.site.id}/settings`}
-                      className="btn-admin btn-admin-primary !py-1.5 !text-xs"
-                    >
-                      Manage
-                    </Link>
-                  </div>
+                  {site.theme.tagline ? (
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                      {site.theme.tagline}
+                    </p>
+                  ) : null}
                 </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-paper/60 px-5 py-2 text-[11px] text-slate-500">
-                  <span>Updated {relativeTime(row.site.updatedAt)}</span>
-                  <span>{count.versions} snapshots kept</span>
-                  <span>{count.imports} imports</span>
-                  <a
-                    href={`/preview/${row.site.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="ml-auto font-medium text-slate-600 underline hover:text-ink-900"
-                  >
-                    Staff preview ↗
-                  </a>
+                <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+                  <span>
+                    <strong className="text-slate-900">{publishedCount}</strong> published /{" "}
+                    {pageCount} pages
+                  </span>
+                  <span className="font-medium text-slate-900">Open workspace</span>
                 </div>
-              </Panel>
+              </Link>
             );
           })}
         </div>
       )}
 
-      <DeletedSites
-        sites={deleted.map((row) => ({
-          id: row.site.id,
-          name: row.site.name,
-          slug: row.site.slug,
-          deletedAt: row.site.deletedAt ? row.site.deletedAt.toISOString() : null,
-          restorableUntil: row.restorableUntil ? row.restorableUntil.toISOString() : null,
-        }))}
-      />
+      {(canRestore || canPurge) && deleted.length > 0 ? (
+        <Panel
+          title={`Recently deleted sites (${deleted.length})`}
+          description="Deleted sites remain restorable for 30 days before the daily sweeper purges them permanently."
+        >
+          <div className="space-y-4">
+            {!steppedUp ? <StepUpNotice compact /> : null}
+            <DeletedSitesPanel
+              deleted={deleted}
+              canRestore={canRestore}
+              canPurge={canPurge}
+            />
+          </div>
+        </Panel>
+      ) : null}
     </div>
   );
 }

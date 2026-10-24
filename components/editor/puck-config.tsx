@@ -1,158 +1,367 @@
 "use client";
 
-import type { Config, Field } from "@puckeditor/core";
-import { REGISTRY_LIST, SITE_FRAME_ALIASES } from "@/lib/registry";
+import type { ReactNode } from "react";
+import type { Config, CustomField, Fields } from "@puckeditor/core";
 import {
-  APPEARANCE_FIELDS,
-  DEFAULT_APPEARANCE,
-  type FieldDef,
-} from "@/lib/registry/types";
-import { DEFAULT_ROOT_PROPS, type SiteTheme } from "@/lib/documents";
-import { themeStyle } from "@/lib/render";
-import type { ResolvedMedia } from "@/lib/media/refs";
-import { ColorField, LinkField, ListField, MediaField, ToggleField } from "./fields";
+  COMPONENT_LIST,
+  GROUP_LABELS,
+  resolveDocumentMedia,
+  type ComponentDefinition,
+  type ComponentGroup,
+  type FieldSpec,
+  type ResolvedMedia,
+} from "@/lib/registry";
+import { APPEARANCE_FIELDS, DEFAULT_APPEARANCE } from "@/lib/registry/types";
+import type { LinkTarget, MediaRef, SiteTheme } from "@/lib/documents";
+import { uploadSiteMedia } from "@/lib/media/upload-client";
+import {
+  adminInputClass,
+  adminLabelClass,
+  adminSelectClass,
+  themeRootClasses,
+} from "@/lib/theme-classes";
 
-export type ConfigOptions = {
-  siteId: string;
-  theme: SiteTheme;
-  media: ResolvedMedia[];
-  onUploaded: (asset: ResolvedMedia) => void;
-
-  scope: "page" | "site-frame";
+export type MediaOption = {
+  id: string;
+  label: string;
+  url: string;
+  alt?: string;
 };
 
-function toField(field: FieldDef, options: ConfigOptions): Field {
-  switch (field.type) {
-    case "text":
-      return { type: "text", label: field.label, placeholder: field.placeholder };
-    case "textarea":
-    case "richtext":
-      return { type: "textarea", label: field.label, placeholder: field.placeholder };
-    case "number":
-      return { type: "number", label: field.label, min: field.min, max: field.max };
-    case "select":
-      return {
-        type: field.options && field.options.length <= 4 ? "radio" : "select",
-        label: field.label,
-        options: field.options ?? [],
-      };
-    case "boolean":
-      return {
-        type: "custom",
-        label: field.label,
-        render: ({ value, onChange }) => (
-          <ToggleField label={field.label} hint={field.help} value={!!value} onChange={onChange} />
-        ),
-      };
-    case "color":
-      return {
-        type: "custom",
-        label: field.label,
-        render: ({ value, onChange }) => (
-          <ColorField label={field.label} value={value as string} onChange={onChange} />
-        ),
-      };
-    case "image":
-      return {
-        type: "custom",
-        label: field.label,
-        render: ({ value, onChange, readOnly }) => (
-          <MediaField
-            label={field.label}
-            hint={field.help}
-            value={value as { id: string } | null}
-            onChange={onChange}
-            media={options.media}
-            siteId={options.siteId}
-            onUploaded={options.onUploaded}
-            readOnly={readOnly}
-          />
-        ),
-      };
-    case "link":
-      return {
-        type: "custom",
-        label: field.label,
-        render: ({ value, onChange }) => (
-          <LinkField
-            label={field.label}
-            value={value as { label: string; href: string; style?: string }}
-            onChange={onChange}
-          />
-        ),
-      };
-    case "list":
-      return {
-        type: "custom",
-        label: field.label,
-        render: ({ value, onChange }) => (
-          <ListField label={field.label} hint={field.help} value={value as string[]} onChange={onChange} />
-        ),
-      };
-    case "repeater": {
-      const arrayFields = Object.fromEntries(
-        (field.fields ?? []).map((sub) => [sub.key, toField(sub, options)]),
-      ) as Record<string, Field>;
-      return {
-        type: "array",
-        label: field.label,
-        arrayFields,
-        defaultItemProps: field.defaultItem ?? {},
-        getItemSummary: (item, index) =>
-          field.itemLabel?.(item as Record<string, unknown>, index ?? 0) ??
-          `Item ${(index ?? 0) + 1}`,
-        max: field.max,
-        min: field.min,
-      };
-    }
-    default:
-      return { type: "text", label: field.label };
-  }
+const GROUPS: ComponentGroup[] = ["site-frame", "conversion", "money", "content", "utility"];
+
+function buildImageField(
+  spec: FieldSpec,
+  siteId: string,
+  media: MediaOption[],
+  onUploaded: (created: MediaOption) => void,
+): CustomField<MediaRef | null> {
+  return {
+    type: "custom",
+    label: spec.label,
+    render: ({ value, onChange }) => {
+      const currentId = value && typeof value === "object" ? value.id : "";
+      const selected = media.find((item) => item.id === currentId);
+      return (
+        <div className="space-y-2 py-1">
+          <span className={adminLabelClass}>{spec.label}</span>
+          <select
+            className={adminSelectClass}
+            value={currentId}
+            onChange={(event) => {
+              const id = event.target.value;
+              if (!id) {
+                onChange(null);
+                return;
+              }
+              const hit = media.find((item) => item.id === id);
+              onChange({
+                id,
+                url: hit?.url,
+                alt: hit?.alt ?? hit?.label ?? "",
+              });
+            }}
+          >
+            <option value="">None selected</option>
+            {media.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          {selected ? (
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-2">
+              <img
+                src={selected.url}
+                alt={selected.alt ?? selected.label}
+                className="max-h-28 w-auto object-contain"
+              />
+            </div>
+          ) : null}
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+            <span>Upload a new image</span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/svg+xml"
+              className="sr-only"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const uploaded = await uploadSiteMedia(siteId, file);
+                const option: MediaOption = {
+                  id: uploaded.id,
+                  label: file.name,
+                  url: uploaded.url,
+                  alt: uploaded.alt || file.name,
+                };
+                onUploaded(option);
+                onChange({ id: option.id, url: option.url, alt: option.alt });
+              }}
+            />
+          </label>
+          {spec.help ? <p className="text-[11px] text-slate-400">{spec.help}</p> : null}
+        </div>
+      );
+    },
+  };
 }
 
-export function buildPuckConfig(options: ConfigOptions): Config {
-  const definitions = REGISTRY_LIST.filter((definition) => {
-    if (definition.deprecated) return false;
-    const isFrame = SITE_FRAME_ALIASES.includes(definition.alias);
-    return options.scope === "site-frame" ? true : !isFrame;
-  });
+function buildBooleanField(spec: FieldSpec): CustomField<boolean> {
+  return {
+    type: "custom",
+    label: spec.label,
+    render: ({ value, onChange }) => (
+      <label className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+        <span>{spec.label}</span>
+        <input
+          type="checkbox"
+          className="accent-slate-950"
+          checked={Boolean(value)}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+      </label>
+    ),
+  };
+}
 
-  const components: Record<string, unknown> = {};
-  for (const definition of definitions) {
-    const domainFields = Object.fromEntries(
-      definition.fields.map((field) => [field.key, toField(field, options)]),
-    );
-    components[definition.alias] = {
-      label: definition.name,
-      fields: {
-        ...domainFields,
-        appearance: {
-          type: "object",
-          label: "Layout and style",
-          objectFields: Object.fromEntries(
-            APPEARANCE_FIELDS.map((field) => [field.key, toField(field, options)]),
-          ),
-        },
+function buildLinkField(spec: FieldSpec): CustomField<LinkTarget> {
+  return {
+    type: "custom",
+    label: spec.label,
+    render: ({ value, onChange }) => {
+      const current: LinkTarget =
+        value && typeof value === "object"
+          ? {
+              label: String(value.label ?? ""),
+              href: String(value.href ?? "#"),
+              style: value.style ?? "solid",
+            }
+          : { label: "Learn more", href: "#", style: "solid" };
+      return (
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <span className={adminLabelClass}>{spec.label}</span>
+          <input
+            className={adminInputClass}
+            placeholder="Button label"
+            value={current.label}
+            onChange={(e) => onChange({ ...current, label: e.target.value })}
+          />
+          <input
+            className={adminInputClass}
+            placeholder="https://... or /path"
+            value={current.href}
+            onChange={(e) => onChange({ ...current, href: e.target.value })}
+          />
+          <select
+            className={adminSelectClass}
+            value={current.style ?? "solid"}
+            onChange={(e) =>
+              onChange({
+                ...current,
+                style: e.target.value as LinkTarget["style"],
+              })
+            }
+          >
+            <option value="solid">Solid accent</option>
+            <option value="outline">Outline</option>
+            <option value="ghost">Ghost</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      );
+    },
+  };
+}
+
+function buildListField(spec: FieldSpec): CustomField<string[]> {
+  return {
+    type: "custom",
+    label: spec.label,
+    render: ({ value, onChange }) => {
+      const lines = Array.isArray(value) ? value.join("\n") : "";
+      return (
+        <div className="space-y-1 py-1">
+          <span className={adminLabelClass}>{spec.label} (one per line)</span>
+          <textarea
+            className={adminInputClass}
+            rows={4}
+            value={lines}
+            onChange={(e) =>
+              onChange(
+                e.target.value
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
+          />
+        </div>
+      );
+    },
+  };
+}
+
+function toPuckFields(
+  specs: FieldSpec[],
+  siteId: string,
+  media: MediaOption[],
+  onUploaded: (created: MediaOption) => void,
+): Fields<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  for (const spec of specs) {
+    switch (spec.type) {
+      case "text":
+      case "color":
+        out[spec.key] = { type: "text", label: spec.label };
+        break;
+      case "textarea":
+      case "richtext":
+        out[spec.key] = { type: "textarea", label: spec.label };
+        break;
+      case "number":
+        out[spec.key] = {
+          type: "number",
+          label: spec.label,
+          min: spec.min,
+          max: spec.max,
+        };
+        break;
+      case "select":
+        out[spec.key] = {
+          type: "select",
+          label: spec.label,
+          options: spec.options ?? [],
+        };
+        break;
+      case "boolean":
+        out[spec.key] = buildBooleanField(spec);
+        break;
+      case "image":
+        out[spec.key] = buildImageField(spec, siteId, media, onUploaded);
+        break;
+      case "link":
+        out[spec.key] = buildLinkField(spec);
+        break;
+      case "list":
+        out[spec.key] = buildListField(spec);
+        break;
+      case "repeater":
+        out[spec.key] = {
+          type: "array",
+          label: spec.label,
+          defaultItemProps: spec.defaultItem ?? {},
+          getItemSummary: (item: Record<string, unknown>, index = 0) =>
+            spec.itemLabel
+              ? spec.itemLabel(item, index)
+              : String(
+                  item.title ??
+                    item.label ??
+                    item.question ??
+                    item.name ??
+                    item.heading ??
+                    item.value ??
+                    `Item ${index + 1}`,
+                ),
+          arrayFields: toPuckFields(spec.fields ?? [], siteId, media, onUploaded),
+        };
+        break;
+    }
+  }
+  return out as Fields<Record<string, unknown>>;
+}
+
+function toPuckComponent(
+  definition: ComponentDefinition,
+  siteId: string,
+  media: MediaOption[],
+  mediaLookup: Map<string, ResolvedMedia>,
+  onUploaded: (created: MediaOption) => void,
+) {
+  const baseFields = toPuckFields(definition.fields, siteId, media, onUploaded);
+  const appearanceFields = toPuckFields(APPEARANCE_FIELDS, siteId, media, onUploaded);
+
+  return {
+    label: definition.name,
+    defaultProps: {
+      ...definition.defaults,
+      appearance: { ...DEFAULT_APPEARANCE },
+    },
+    fields: {
+      ...baseFields,
+      appearance: {
+        type: "object",
+        label: "Appearance",
+        objectFields: appearanceFields,
       },
-      defaultProps: { appearance: { ...DEFAULT_APPEARANCE }, ...definition.defaults },
-      render: definition.render as unknown as (props: Record<string, unknown>) => React.ReactNode,
-      metadata: { group: definition.group, description: definition.description },
+    } as Fields<Record<string, unknown>>,
+    render: (rawProps: Record<string, unknown>) => {
+      const { id: _id, puck: _puck, editMode: _editMode, ...rest } = rawProps;
+      void _id;
+      void _puck;
+      void _editMode;
+      const hydrated = resolveDocumentMedia(
+        {
+          schemaVersion: 1,
+          root: { props: {} },
+          content: [{ type: definition.alias, props: rest }],
+        },
+        mediaLookup,
+      ).content[0]?.props ?? rest;
+      const parsed = definition.schema.safeParse(hydrated);
+      const props = parsed.success
+        ? parsed.data
+        : { ...definition.defaults, appearance: DEFAULT_APPEARANCE, ...hydrated };
+      return <>{definition.render(props as never)}</>;
+    },
+  };
+}
+
+export function buildEditorConfig({
+  theme,
+  siteId,
+  media,
+  allowAdminBlocks,
+  onUploaded,
+}: {
+  theme: SiteTheme;
+  siteId: string;
+  media: MediaOption[];
+  allowAdminBlocks: boolean;
+  onUploaded: (created: MediaOption) => void;
+}): Config {
+  const mediaLookup = new Map<string, ResolvedMedia>();
+  for (const item of media) {
+    const resolved: ResolvedMedia = {
+      id: item.id,
+      url: item.url,
+      alt: item.alt ?? item.label,
     };
+    mediaLookup.set(item.id, resolved);
+  }
+
+  const components: Record<string, ReturnType<typeof toPuckComponent>> = {};
+  for (const definition of COMPONENT_LIST) {
+    if (definition.deprecated) continue;
+    components[definition.alias] = toPuckComponent(
+      definition,
+      siteId,
+      media,
+      mediaLookup,
+      onUploaded,
+    );
   }
 
   const categories = Object.fromEntries(
-    [...new Set(definitions.map((definition) => definition.group))].map((group) => [
+    GROUPS.map((group) => [
       group,
       {
-        title:
-          {
-            "site-frame": "Site frame",
-            conversion: "Hero and conversion",
-            money: "Money and trust",
-            content: "Content",
-            utility: "Utilities",
-          }[group] ?? group,
-        components: definitions.filter((definition) => definition.group === group).map((d) => d.alias),
+        title: GROUP_LABELS[group],
+        components: COMPONENT_LIST.filter(
+          (item) =>
+            !item.deprecated &&
+            item.group === group &&
+            (allowAdminBlocks || !item.adminOnly),
+        ).map((item) => item.alias),
       },
     ]),
   );
@@ -161,53 +370,11 @@ export function buildPuckConfig(options: ConfigOptions): Config {
     components,
     categories,
     root: {
-      fields: {
-        contentWidth: {
-          type: "radio",
-          label: "Content width",
-          options: [
-            { label: "Narrow", value: "narrow" },
-            { label: "Default", value: "default" },
-            { label: "Wide", value: "wide" },
-          ],
-        },
-        background: {
-          type: "select",
-          label: "Page background",
-          options: [
-            { label: "Theme default", value: "default" },
-            { label: "Surface", value: "surface" },
-            { label: "Deep dark", value: "dark" },
-          ],
-        },
-        hideHeader: {
-          type: "custom",
-          label: "Hide the site header on this page",
-          render: ({ value, onChange }: { value?: unknown; onChange: (value: unknown) => void }) => (
-            <ToggleField label="Hide the site header on this page" value={!!value} onChange={onChange} />
-          ),
-        },
-        hideFooter: {
-          type: "custom",
-          label: "Hide the site footer on this page",
-          render: ({ value, onChange }: { value?: unknown; onChange: (value: unknown) => void }) => (
-            <ToggleField label="Hide the site footer on this page" value={!!value} onChange={onChange} />
-          ),
-        },
-        hideDock: {
-          type: "custom",
-          label: "Hide the sticky action dock",
-          render: ({ value, onChange }: { value?: unknown; onChange: (value: unknown) => void }) => (
-            <ToggleField label="Hide the sticky action dock" value={!!value} onChange={onChange} />
-          ),
-        },
-      },
-      defaultProps: { ...DEFAULT_ROOT_PROPS },
-      render: ({ children }: { children?: React.ReactNode }) => (
-        <div className="site-scope min-h-full" style={themeStyle(options.theme)}>
-          {children}
-        </div>
+      fields: {},
+      defaultProps: {},
+      render: ({ children }: { children: ReactNode }) => (
+        <div className={`${themeRootClasses(theme)} min-h-screen`}>{children}</div>
       ),
     },
-  } as unknown as Config;
+  };
 }

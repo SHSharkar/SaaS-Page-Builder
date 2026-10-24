@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { stepUpAction, type FormState } from "@/lib/actions/auth";
+import { adminButtonVariants, adminInputClass } from "@/lib/theme-classes";
 
 export function StepUpNotice({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
@@ -24,7 +25,8 @@ export function StepUpNotice({ compact = false }: { compact?: boolean }) {
     >
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[12px] text-amber-900">
-          Sensitive changes need a fresh confirmation. Enter your password to unlock a ten-minute window.
+          Sensitive changes need a fresh confirmation. Enter your password to unlock a ten-minute
+          window.
         </p>
         <input
           type="password"
@@ -32,14 +34,18 @@ export function StepUpNotice({ compact = false }: { compact?: boolean }) {
           required
           autoComplete="current-password"
           placeholder="Your password"
-          className="input !w-44 !py-1 !text-[12px]"
+          className={`${adminInputClass} w-44 py-1 text-[12px]`}
         />
-        <button type="submit" className="btn-admin btn-admin-secondary !py-1 !text-[11px]" disabled={pending}>
-          {pending ? "Checking…" : "Confirm"}
+        <button
+          type="submit"
+          className={adminButtonVariants({ tone: "secondary", size: "sm" })}
+          disabled={pending}
+        >
+          {pending ? "Checking..." : "Confirm"}
         </button>
       </div>
       {state?.error ? <p className="mt-1.5 text-[11px] text-red-700">{state.error}</p> : null}
-      {state?.ok ? <p className="mt-1.5 text-[11px] text-green-800">{state.message}</p> : null}
+      {state?.ok ? <p className="mt-1.5 text-[11px] text-emerald-800">{state.message}</p> : null}
     </form>
   );
 }

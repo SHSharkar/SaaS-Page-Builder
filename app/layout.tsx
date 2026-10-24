@@ -1,23 +1,23 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Trofēo Pages", template: "%s · Trofēo Pages" },
+  title: {
+    default: "Trofeo Pages",
+    template: "%s | Trofeo Pages",
+  },
   description:
-    "The internal page builder: compose pages from a component library, publish to a subdomain or a customer domain, and keep every edit reversible.",
-  robots: { index: false, follow: false },
+    "Self-hosted multi-brand page builder and publishing platform.",
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  themeColor: "#0b1120",
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="en">
-      <body className="antialiased">{children}</body>
+    <html lang="en" className="h-full antialiased">
+      <body className="min-h-full bg-slate-50 font-sans text-slate-900">{children}</body>
     </html>
   );
 }

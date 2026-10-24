@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ButtonLink, Eyebrow, Glyph, MediaImage, Section, Stars } from "../shell";
 import type { BlockDefinition } from "../types";
 import { LiveCountdown } from "@/components/blocks/live-countdown";
+import { SITE_CHIP, cn } from "@/lib/theme-classes";
 
 export const hero: BlockDefinition<{
   eyebrow: string;
@@ -24,7 +25,7 @@ export const hero: BlockDefinition<{
   summary: "Headline, buttons and background",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Welcome to Trofeo" },
-    { key: "title", label: "Headline", type: "text", default: "Play your favourites. Earn rewards." },
+    { key: "title", label: "Headline", type: "text", default: "Play your favorites. Earn rewards." },
     {
       key: "subtitle",
       label: "Subheadline",
@@ -44,7 +45,7 @@ export const hero: BlockDefinition<{
       default: { label: "See how it works", href: "#how-it-works", style: "outline" },
     },
     { key: "background", label: "Background image", type: "image" },
-    { key: "overlay", label: "Image overlay (0–100)", type: "number", min: 0, max: 100, default: 55 },
+    { key: "overlay", label: "Image overlay (0 to 100)", type: "number", min: 0, max: 100, default: 55 },
     { key: "rating", label: "Rating out of 5", type: "number", min: 0, max: 5, default: 4.5 },
     { key: "ratingLabel", label: "Rating label", type: "text", default: "Rated 4.5 by 12,400 players" },
     {
@@ -53,7 +54,7 @@ export const hero: BlockDefinition<{
       type: "select",
       options: [
         { label: "Left", value: "left" },
-        { label: "Centred", value: "center" },
+        { label: "Centered", value: "center" },
       ],
       default: "left",
     },
@@ -72,7 +73,7 @@ export const hero: BlockDefinition<{
   ],
   defaults: {
     eyebrow: "Welcome to Trofeo",
-    title: "Play your favourites. Earn rewards.",
+    title: "Play your favorites. Earn rewards.",
     subtitle: "Join free, collect trophies while you play, and redeem them for real rewards.",
     primary: { label: "Claim welcome bonus", href: "/join", style: "solid" },
     secondary: { label: "See how it works", href: "#how-it-works", style: "outline" },
@@ -89,10 +90,18 @@ export const hero: BlockDefinition<{
     title: z.string().catch(""),
     subtitle: z.string().catch(""),
     primary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "Claim", href: "/join", style: "solid" as const }),
     secondary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("outline") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("outline"),
+      })
       .catch({ label: "", href: "", style: "outline" as const }),
     background: z.object({ id: z.string() }).nullable().catch(null),
     overlay: z.coerce.number().min(0).max(100).catch(55),
@@ -118,13 +127,17 @@ export const hero: BlockDefinition<{
     appearance,
   }) => {
     const heights = { compact: "py-16", regular: "py-24", tall: "py-32" } as const;
+    const overlayShade =
+      overlay >= 70 ? "bg-site-bg/85" : overlay >= 40 ? "bg-site-bg/70" : "bg-site-bg/45";
     return (
       <section
         id={appearance?.anchor || undefined}
-        className={`relative overflow-hidden ${heights[height ?? "regular"]} ${
-          appearance?.visibility === "desktop" ? "hidden md:block" : appearance?.visibility === "mobile" ? "md:hidden" : ""
-        }`}
-        style={{ background: "var(--site-bg)", color: "var(--site-text)" }}
+        className={cn(
+          "relative overflow-hidden bg-site-bg text-site-text",
+          heights[height ?? "regular"],
+          appearance?.visibility === "desktop" && "hidden md:block",
+          appearance?.visibility === "mobile" && "md:hidden",
+        )}
         data-block-section=""
       >
         {background?.id ? (
@@ -135,67 +148,44 @@ export const hero: BlockDefinition<{
               rounded={false}
               className="h-full w-full object-cover"
             />
-            <div
-              className="absolute inset-0"
-              style={{
-                background: `linear-gradient(90deg, color-mix(in srgb, var(--site-bg) ${Math.max(
-                  55,
-                  100 - overlay,
-                )}%, transparent) 0%, color-mix(in srgb, var(--site-bg) ${Math.max(
-                  20,
-                  85 - overlay,
-                )}%, transparent) 100%)`,
-              }}
-            />
+            <div className={cn("absolute inset-0", overlayShade)} />
           </div>
         ) : (
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(900px 480px at 78% -10%, color-mix(in srgb, var(--site-accent) 26%, transparent), transparent 65%), radial-gradient(700px 420px at 8% 110%, color-mix(in srgb, var(--site-accent) 14%, transparent), transparent 60%)",
-            }}
-          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-site-accent/15 via-transparent to-site-accent/5" />
         )}
-        <div
-          className={`relative mx-auto max-w-[1160px] px-5 sm:px-8 ${align === "center" ? "text-center" : ""}`}
-        >
-          <div className={`max-w-2xl ${align === "center" ? "mx-auto" : ""}`}>
+        <div className={cn("relative mx-auto w-full px-5 sm:px-8", align === "center" && "text-center")}>
+          <div>
             <Eyebrow>{eyebrow}</Eyebrow>
-            <h1 className="font-heading text-4xl leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+            <h1 className="font-heading text-4xl leading-[1.06] tracking-tight sm:text-5xl lg:text-6xl">
               {title}
             </h1>
             {subtitle ? (
-              <p
-                className="mt-5 text-base leading-relaxed sm:text-lg"
-                style={{ color: "var(--site-muted)" }}
-              >
-                {subtitle}
-              </p>
+              <p className="mt-5 text-base leading-relaxed text-site-muted sm:text-lg">{subtitle}</p>
             ) : null}
             <div
-              className={`mt-8 flex flex-wrap items-center gap-3 ${
-                align === "center" ? "justify-center" : ""
-              }`}
+              className={cn(
+                "mt-8 flex flex-wrap items-center gap-3",
+                align === "center" && "justify-center",
+              )}
             >
               <ButtonLink link={primary} size="lg" />
               <ButtonLink link={secondary} size="lg" />
             </div>
             {rating > 0 ? (
               <div
-                className={`mt-7 flex items-center gap-2 text-sm ${
-                  align === "center" ? "justify-center" : ""
-                }`}
-                style={{ color: "var(--site-muted)" }}
+                className={cn(
+                  "mt-7 flex items-center gap-2 text-sm text-site-muted",
+                  align === "center" && "justify-center",
+                )}
               >
                 <Stars rating={rating} />
                 <span>{ratingLabel}</span>
               </div>
             ) : null}
             {badges.length ? (
-              <div className={`mt-6 flex flex-wrap gap-2 ${align === "center" ? "justify-center" : ""}`}>
+              <div className={cn("mt-6 flex flex-wrap gap-2", align === "center" && "justify-center")}>
                 {badges.map((badge, index) => (
-                  <span key={index} className="chip">
+                  <span key={index} className={SITE_CHIP}>
                     {badge}
                   </span>
                 ))}
@@ -227,7 +217,7 @@ export const ctaButton: BlockDefinition<{
       type: "link",
       default: { label: "Claim your bonus", href: "/join", style: "solid" },
     },
-    { key: "note", label: "Small note", type: "text", default: "Takes 60 seconds · No purchase needed" },
+    { key: "note", label: "Small note", type: "text", default: "Takes 60 seconds . No purchase needed" },
     {
       key: "size",
       label: "Size",
@@ -246,7 +236,7 @@ export const ctaButton: BlockDefinition<{
       type: "select",
       options: [
         { label: "Left", value: "left" },
-        { label: "Centre", value: "center" },
+        { label: "Center", value: "center" },
         { label: "Right", value: "right" },
       ],
       default: "center",
@@ -254,14 +244,18 @@ export const ctaButton: BlockDefinition<{
   ],
   defaults: {
     link: { label: "Claim your bonus", href: "/join", style: "solid" },
-    note: "Takes 60 seconds · No purchase needed",
+    note: "Takes 60 seconds . No purchase needed",
     size: "md",
     fullWidth: false,
     align: "center",
   },
   schema: z.looseObject({
     link: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "Claim", href: "/join", style: "solid" as const }),
     note: z.string().catch(""),
     size: z.enum(["sm", "md", "lg"]).catch("md"),
@@ -271,18 +265,15 @@ export const ctaButton: BlockDefinition<{
   render: ({ link, note, size, fullWidth, align, appearance }) => (
     <Section appearance={appearance}>
       <div
-        className={`flex flex-col gap-2 ${
-          align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start"
-        }`}
+        className={cn(
+          "flex flex-col gap-2",
+          align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start",
+        )}
       >
         <div className={fullWidth ? "w-full" : ""}>
           <ButtonLink link={link} size={size} className={fullWidth ? "w-full justify-center" : ""} />
         </div>
-        {note ? (
-          <p className="text-xs" style={{ color: "var(--site-muted)" }}>
-            {note}
-          </p>
-        ) : null}
+        {note ? <p className="text-xs text-site-muted">{note}</p> : null}
       </div>
     </Section>
   ),
@@ -320,58 +311,48 @@ export const ctaBanner: BlockDefinition<{
       type: "link",
       default: { label: "Talk to support", href: "/contact", style: "ghost" },
     },
-    { key: "note", label: "Fine print", type: "text", default: "18+. New players only. T&Cs apply." },
+    { key: "note", label: "Fine print", type: "text", default: "18+. New players only. Terms apply." },
   ],
   defaults: {
     title: "Your next trophy is one spin away",
     text: "Set up a free account in under a minute and claim the welcome bonus today.",
     primary: { label: "Create free account", href: "/join", style: "solid" },
     secondary: { label: "Talk to support", href: "/contact", style: "ghost" },
-    note: "18+. New players only. T&Cs apply.",
+    note: "18+. New players only. Terms apply.",
   },
   schema: z.looseObject({
     title: z.string().catch(""),
     text: z.string().catch(""),
     primary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "Join", href: "/join", style: "solid" as const }),
     secondary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("ghost") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("ghost"),
+      })
       .catch({ label: "", href: "", style: "ghost" as const }),
     note: z.string().catch(""),
   }),
   render: ({ title, text, primary, secondary, note, appearance }) => (
     <Section appearance={appearance}>
-      <div
-        className="relative overflow-hidden rounded-[var(--site-radius-lg)] border p-8 sm:p-12"
-        style={{
-          borderColor: "color-mix(in srgb, var(--site-accent) 35%, var(--site-border))",
-          background:
-            "linear-gradient(135deg, color-mix(in srgb, var(--site-accent) 16%, var(--site-surface)), var(--site-surface))",
-        }}
-      >
-        <div className="relative max-w-2xl">
-          <h2 className="font-heading text-3xl leading-tight tracking-tight sm:text-4xl">{title}</h2>
-          {text ? (
-            <p className="mt-3 text-base leading-relaxed" style={{ color: "var(--site-muted)" }}>
-              {text}
-            </p>
-          ) : null}
+      <div className="relative overflow-hidden rounded-site-lg border border-site-accent/40 bg-gradient-to-br from-site-accent/15 to-site-surface p-8 sm:p-12">
+        <div className="relative">
+          <h2 className="font-heading text-3xl leading-tight tracking-tight text-site-text sm:text-4xl">
+            {title}
+          </h2>
+          {text ? <p className="mt-3 text-base leading-relaxed text-site-muted">{text}</p> : null}
           <div className="mt-7 flex flex-wrap gap-3">
             <ButtonLink link={primary} size="lg" />
             <ButtonLink link={secondary} size="lg" />
           </div>
-          {note ? (
-            <p className="mt-4 text-xs" style={{ color: "var(--site-muted)" }}>
-              {note}
-            </p>
-          ) : null}
+          {note ? <p className="mt-4 text-xs text-site-muted">{note}</p> : null}
         </div>
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full"
-          style={{ background: "color-mix(in srgb, var(--site-accent) 22%, transparent)", filter: "blur(40px)" }}
-        />
       </div>
     </Section>
   ),
@@ -389,11 +370,16 @@ export const countdown: BlockDefinition<{
   name: "Countdown",
   group: "conversion",
   description: "A target time with days, hours, minutes and seconds, and an expiry message.",
-  summary: "Timer with expiry behaviour",
+  summary: "Timer with expiry behavior",
   fields: [
     { key: "title", label: "Headline", type: "text", default: "Welcome bonus ends soon" },
     { key: "targetDate", label: "Target date (ISO)", type: "text", default: "2026-12-31T23:59:00Z" },
-    { key: "expiredMessage", label: "When it expires", type: "text", default: "This offer has ended — see the current bonuses." },
+    {
+      key: "expiredMessage",
+      label: "When it expires",
+      type: "text",
+      default: "This offer has ended. See the current bonuses.",
+    },
     { key: "labels", label: "Unit labels", type: "text", default: "Days,Hours,Minutes,Seconds" },
     {
       key: "cta",
@@ -415,7 +401,7 @@ export const countdown: BlockDefinition<{
   defaults: {
     title: "Welcome bonus ends soon",
     targetDate: "2026-12-31T23:59:00Z",
-    expiredMessage: "This offer has ended — see the current bonuses.",
+    expiredMessage: "This offer has ended. See the current bonuses.",
     labels: "Days,Hours,Minutes,Seconds",
     cta: { label: "Claim before it ends", href: "/join", style: "solid" },
     variant: "panel",
@@ -426,26 +412,29 @@ export const countdown: BlockDefinition<{
     expiredMessage: z.string().catch(""),
     labels: z.string().catch("Days,Hours,Minutes,Seconds"),
     cta: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "", href: "", style: "solid" as const }),
     variant: z.enum(["panel", "inline"]).catch("panel"),
   }),
   render: ({ title, targetDate, expiredMessage, labels, cta, variant, appearance }) => (
     <Section appearance={appearance}>
       <div
-        className={`flex flex-col gap-6 rounded-[var(--site-radius-lg)] border p-6 sm:p-8 ${
-          variant === "inline" ? "sm:flex-row sm:items-center sm:justify-between" : "items-center text-center"
-        }`}
-        style={{
-          borderColor: "var(--site-border)",
-          background: "color-mix(in srgb, var(--site-surface) 88%, var(--site-bg))",
-        }}
+        className={cn(
+          "flex flex-col gap-6 rounded-site-lg border border-site-border bg-site-surface p-6 sm:p-8",
+          variant === "inline"
+            ? "sm:flex-row sm:items-center sm:justify-between"
+            : "items-center text-center",
+        )}
       >
         <div>
-          <p className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--site-accent)" }}>
+          <p className="flex items-center gap-2 text-sm font-semibold text-site-accent">
             <Glyph name="clock" size={16} /> Offer window
           </p>
-          <h3 className="mt-1 font-heading text-2xl tracking-tight">{title}</h3>
+          <h3 className="mt-1 font-heading text-2xl tracking-tight text-site-text">{title}</h3>
         </div>
         <LiveCountdown
           targetDate={targetDate}
@@ -491,22 +480,19 @@ export const promoBanner: BlockDefinition<{
     offer: z.string().catch(""),
     code: z.string().catch(""),
     cta: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "", href: "", style: "solid" as const }),
   }),
   render: ({ headline, offer, code, cta, appearance }) => (
     <Section appearance={appearance}>
-      <div
-        className="flex flex-col items-start gap-5 rounded-[var(--site-radius-lg)] px-6 py-6 sm:flex-row sm:items-center sm:justify-between"
-        style={{
-          background:
-            "linear-gradient(100deg, var(--site-accent), color-mix(in srgb, var(--site-accent) 70%, #ffffff))",
-          color: "var(--site-accent-contrast)",
-        }}
-      >
+      <div className="flex flex-col items-start gap-5 rounded-site-lg bg-site-accent px-6 py-6 text-site-accent-contrast sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="font-heading text-2xl leading-tight tracking-tight">{headline}</p>
-          <p className="mt-1 text-sm opacity-80">{offer}</p>
+          <p className="mt-1 text-sm opacity-85">{offer}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {code ? (
@@ -514,7 +500,11 @@ export const promoBanner: BlockDefinition<{
               {code}
             </span>
           ) : null}
-          <ButtonLink link={cta} size="md" className="!bg-[color:var(--site-accent-contrast)] !text-[color:var(--site-accent)]" />
+          <ButtonLink
+            link={cta}
+            size="md"
+            className="bg-site-accent-contrast text-site-accent hover:opacity-90"
+          />
         </div>
       </div>
     </Section>

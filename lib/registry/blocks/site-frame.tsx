@@ -1,18 +1,8 @@
 import { z } from "zod";
-import { Glyph, MediaImage, Section } from "../shell";
-import type { BlockDefinition, FieldDef } from "../types";
-
-const linkArray: FieldDef = {
-  key: "links",
-  label: "Links",
-  type: "repeater",
-  defaultItem: { label: "New link", href: "/" },
-  itemLabel: (item) => String(item.label ?? "Link"),
-  fields: [
-    { key: "label", label: "Label", type: "text", default: "New link" },
-    { key: "href", label: "Link", type: "text", default: "/" },
-  ],
-};
+import { Glyph, MediaImage } from "../shell";
+import type { BlockDefinition } from "../types";
+import { MobileNavModal } from "@/components/blocks/mobile-nav-modal";
+import { cn, siteButton } from "@/lib/theme-classes";
 
 type HeaderProps = {
   logoText: string;
@@ -98,34 +88,27 @@ export const siteHeader: BlockDefinition<HeaderProps> = {
   render: ({ logoText, logo, links, cta, variant, sticky, announcement, announcementHref }) => (
     <header
       data-site-header=""
-      className={`${sticky ? "sticky top-0" : ""} z-40 w-full border-b`}
-      style={{
-        background:
-          variant === "transparent"
-            ? "color-mix(in srgb, var(--site-bg) 55%, transparent)"
-            : "color-mix(in srgb, var(--site-bg) 88%, transparent)",
-        backdropFilter: "blur(14px)",
-        borderColor: "var(--site-border)",
-        color: "var(--site-text)",
-      }}
+      className={cn(
+        "z-40 w-full border-b border-site-border text-site-text backdrop-blur-md",
+        sticky && "sticky top-0",
+        variant === "transparent" ? "bg-site-bg/60" : "bg-site-bg/90",
+      )}
     >
       {announcement ? (
         <a
           href={announcementHref || "#"}
-          className="block px-4 py-2 text-center text-[13px] font-medium"
-          style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
+          className="block bg-site-accent px-4 py-2 text-center text-[13px] font-medium text-site-accent-contrast"
         >
           {announcement}
         </a>
       ) : null}
-      <div className="mx-auto flex max-w-[1160px] items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
-        <a href="/" className="flex items-center gap-2.5">
+      <div className="mx-auto flex w-full items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
+        <a href={"/" as string} className="flex items-center gap-2.5">
           {logo?.id ? (
             <MediaImage value={logo} alt={logoText} rounded={false} className="h-9 w-auto" />
           ) : (
             <span
-              className="grid h-9 w-9 place-items-center rounded-[var(--site-radius-sm)] text-sm font-black"
-              style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
+              className="grid h-9 w-9 place-items-center rounded-site-sm bg-site-accent text-sm font-black text-site-accent-contrast"
               aria-hidden="true"
             >
               {(logoText || "T").slice(0, 1).toUpperCase()}
@@ -138,48 +121,25 @@ export const siteHeader: BlockDefinition<HeaderProps> = {
             <a
               key={index}
               href={link.href || "#"}
-              className="text-[14px] font-medium opacity-80 transition hover:opacity-100"
+              className="text-sm font-medium opacity-80 transition hover:opacity-100"
             >
               {link.label}
             </a>
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          <a className="btn btn-solid hidden px-4 py-2 text-sm md:inline-flex" href={cta?.href || "#"}>
+          <a
+            className={cn(siteButton({ variant: "solid", size: "sm" }), "hidden md:inline-flex")}
+            href={cta?.href || "#"}
+          >
             {cta?.label || "Get started"}
           </a>
-          <details className="group relative md:hidden">
-            <summary
-              className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded-[var(--site-radius-sm)] border"
-              style={{ borderColor: "var(--site-border)" }}
-              aria-label="Open menu"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z" />
-              </svg>
-            </summary>
-            <div
-              className="absolute right-0 top-12 z-50 w-60 rounded-[var(--site-radius-md)] border p-2 shadow-xl"
-              style={{
-                background: "var(--site-surface)",
-                borderColor: "var(--site-border)",
-                color: "var(--site-text)",
-              }}
-            >
-              {links.map((link, index) => (
-                <a
-                  key={index}
-                  href={link.href || "#"}
-                  className="block rounded-[var(--site-radius-sm)] px-3 py-2.5 text-sm font-medium hover:bg-black/5"
-                >
-                  {link.label}
-                </a>
-              ))}
-              <a className="btn btn-solid mt-2 w-full" href={cta?.href || "#"}>
-                {cta?.label || "Get started"}
-              </a>
-            </div>
-          </details>
+          <MobileNavModal
+            brand={logoText || "Trofeo"}
+            links={links}
+            ctaLabel={cta?.label || "Get started"}
+            ctaHref={cta?.href || "#"}
+          />
         </div>
       </div>
     </header>
@@ -257,7 +217,7 @@ export const siteFooter: BlockDefinition<{
     columns: [
       { title: "Play", links: "Games|/games\nBonuses|/bonuses\nHow it works|/how-it-works" },
       { title: "Company", links: "About|/about\nCareers|/careers\nPress|/press" },
-      { title: "Support", links: "Help centre|/help\nContact|/contact\nResponsible play|/responsible" },
+      { title: "Support", links: "Help center|/help\nContact|/contact\nResponsible play|/responsible" },
     ],
     legal:
       "Trofeo Reward is a social games platform. No purchase necessary. 18+ only. Play responsibly.",
@@ -276,21 +236,18 @@ export const siteFooter: BlockDefinition<{
     socials: z.array(z.object({ label: z.string(), href: z.string() })).catch([]),
   }),
   render: ({ brandLine, tagline, columns, legal, badges, socials }) => (
-    <footer style={{ background: "var(--site-surface)", color: "var(--site-text)" }} data-site-footer="">
-      <div className="mx-auto max-w-[1160px] px-5 py-14 sm:px-8">
+    <footer className="bg-site-surface text-site-text" data-site-footer="">
+      <div className="mx-auto w-full px-5 py-14 sm:px-8">
         <div className="grid gap-10 md:grid-cols-[1.3fr_repeat(3,1fr)]">
           <div>
             <p className="font-heading text-xl font-semibold">{brandLine}</p>
-            <p className="mt-2 max-w-xs text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-              {tagline}
-            </p>
+            <p className="mt-2 text-sm leading-relaxed text-site-muted">{tagline}</p>
             <div className="mt-5 flex flex-wrap gap-2">
               {socials.map((social, index) => (
                 <a
                   key={index}
                   href={social.href}
-                  className="rounded-full border px-3 py-1 text-xs font-medium"
-                  style={{ borderColor: "var(--site-border)", color: "var(--site-muted)" }}
+                  className="rounded-full border border-site-border px-3 py-1 text-xs font-medium text-site-muted hover:text-site-text"
                 >
                   {social.label}
                 </a>
@@ -299,7 +256,7 @@ export const siteFooter: BlockDefinition<{
           </div>
           {columns.map((column, index) => (
             <div key={index}>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--site-muted)" }}>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-site-muted">
                 {column.title}
               </p>
               <ul className="mt-3 space-y-2 text-sm">
@@ -314,17 +271,13 @@ export const siteFooter: BlockDefinition<{
             </div>
           ))}
         </div>
-        <div
-          className="mt-12 flex flex-col gap-4 border-t pt-6 text-xs md:flex-row md:items-center md:justify-between"
-          style={{ borderColor: "var(--site-border)", color: "var(--site-muted)" }}
-        >
-          <p className="max-w-3xl leading-relaxed">{legal}</p>
+        <div className="mt-12 flex flex-col gap-4 border-t border-site-border pt-6 text-xs text-site-muted md:flex-row md:items-center md:justify-between">
+          <p className="leading-relaxed">{legal}</p>
           <div className="flex flex-wrap gap-2">
             {badges.map((badge, index) => (
               <span
                 key={index}
-                className="rounded border px-2 py-1 font-semibold uppercase tracking-wide"
-                style={{ borderColor: "var(--site-border)" }}
+                className="rounded border border-site-border px-2 py-1 font-semibold uppercase tracking-wide"
               >
                 {badge}
               </span>
@@ -372,38 +325,41 @@ export const stickyCtaDock: BlockDefinition<{
   schema: z.looseObject({
     message: z.string().catch(""),
     primary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("solid"),
+      })
       .catch({ label: "Claim now", href: "/join", style: "solid" as const }),
     secondary: z
-      .object({ label: z.string(), href: z.string(), style: z.enum(["solid", "outline", "ghost", "light"]).catch("outline") })
+      .object({
+        label: z.string(),
+        href: z.string(),
+        style: z.enum(["solid", "outline", "ghost", "light"]).catch("outline"),
+      })
       .catch({ label: "", href: "", style: "outline" as const }),
     showOnDesktop: z.coerce.boolean().catch(false),
   }),
   render: ({ message, primary, secondary, showOnDesktop }) => (
     <div
-      className={`${showOnDesktop ? "" : "md:hidden"} fixed inset-x-0 bottom-0 z-50 border-t px-4 py-3`}
-      style={{
-        background: "color-mix(in srgb, var(--site-bg) 92%, transparent)",
-        borderColor: "var(--site-border)",
-        backdropFilter: "blur(12px)",
-        paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
-      }}
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-50 border-t border-site-border bg-site-bg/95 px-4 py-3 backdrop-blur-md",
+        !showOnDesktop && "md:hidden",
+      )}
     >
-      <div className="mx-auto flex max-w-[1160px] items-center gap-3">
+      <div className="mx-auto flex w-full items-center gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold" style={{ color: "var(--site-text)" }}>
-            {message}
-          </p>
-          <p className="flex items-center gap-1 text-[11px]" style={{ color: "var(--site-muted)" }}>
-            <Glyph name="shield" size={12} /> 18+ · Play responsibly
+          <p className="text-sm font-semibold text-site-text">{message}</p>
+          <p className="flex items-center gap-1 text-[11px] text-site-muted">
+            <Glyph name="shield" size={12} /> 18+ . Play responsibly
           </p>
         </div>
         {secondary?.label ? (
-          <a className="btn btn-outline px-3 py-2 text-sm" href={secondary.href || "#"}>
+          <a className={siteButton({ variant: "outline", size: "sm" })} href={secondary.href || "#"}>
             {secondary.label}
           </a>
         ) : null}
-        <a className="btn btn-solid px-4 py-2 text-sm" href={primary?.href || "#"}>
+        <a className={siteButton({ variant: "solid", size: "sm" })} href={primary?.href || "#"}>
           {primary?.label || "Claim"}
         </a>
       </div>
@@ -412,6 +368,3 @@ export const stickyCtaDock: BlockDefinition<{
 };
 
 export const siteFrameBlocks = [siteHeader, siteFooter, stickyCtaDock];
-
-void Section;
-void linkArray;

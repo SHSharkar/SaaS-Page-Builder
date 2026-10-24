@@ -1,71 +1,97 @@
-import { listStaff, listInvites } from "@/lib/team";
-import { listRoles } from "@/lib/auth/rbac";
-import { requireView, can } from "@/lib/auth/session";
-import { PageHeader } from "@/components/admin/ui";
-import { TeamPanel } from "@/components/admin/team-panel";
+import { can, hasRecentStepUp, requireView } from "@/lib/auth/session";
+import { loadTeamSnapshot } from "@/lib/team";
+import { listLiveSessions } from "@/lib/actions/team";
+import { PageHeader, Panel } from "@/components/admin/ui";
 import { StepUpNotice } from "@/components/admin/step-up-notice";
-
-export const metadata = { title: "Team" };
-export const dynamic = "force-dynamic";
+import {
+  InviteForm,
+  InvitesList,
+  LiveSessionsPanel,
+  MembersList,
+} from "@/components/admin/team-client";
 
 export default async function TeamPage() {
-  const actor = await requireView("staff.view");
-  const [members, invites, roles] = await Promise.all([listStaff(), listInvites(), listRoles()]);
-  const manage = can(actor, "staff.manage");
+  const actor = await requireView("staff.view", "/admin/team");
+  const [snapshot, liveSessions, steppedUp] = await Promise.all([
+    loadTeamSnapshot(),
+    listLiveSessions(),
+    hasRecentStepUp(actor),
+  ]);
+
+  const canInvite = can(actor, "staff.invite");
+  const canManage = can(actor, "staff.manage");
+
+  const roleOptions = snapshot.roles.map((role) => ({
+    id: role.id,
+    key: role.key,
+    name: role.name,
+    rank: role.rank,
+    isSystem: role.isSystem,
+    permissionCount: role.permissionKeys.length,
+  }));
+
+  const members = snapshot.members.map((member) => ({
+    ...member,
+    lastSignInAt: member.lastSignInAt?.toISOString() ?? null,
+  }));
+
+  const invites = snapshot.invites.map((invite) => ({
+    id: invite.id,
+    email: invite.email,
+    roleName: invite.roleName,
+    status: invite.status,
+    expiresAt: invite.expiresAt.toISOString(),
+  }));
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        eyebrow="Access"
-        title="Team"
-        description="Internal staff only. Roles come from the permission matrix, every action re-checks them on the server, and sensitive changes need a fresh identity confirmation."
-        actions={<span className="badge badge-gray">{members.length} people</span>}
+        eyebrow="Staff access"
+        title="Team & invitations"
+        description="Invite colleagues with single-use 7-day tokens, assign roles, issue 1-hour password reset links, and manage active sessions."
       />
-      <div className="space-y-4">
-        {manage ? <StepUpNotice compact /> : null}
-        <TeamPanel
-          canManage={manage}
-          currentUserId={actor.user.id}
-          roles={roles.map((role) => ({
-            id: role.id,
-            name: role.name,
-            isSystem: role.isSystem,
-            rank: role.rank,
-          }))}
-          members={members.map((member) => ({
-            id: member.id,
-            name: member.name,
-            email: member.email,
-            roleKey: member.roleKey,
-            role: member.role
-              ? {
-                  id: member.role.id,
-                  name: member.role.name,
-                  isSystem: member.role.isSystem,
-                  rank: member.role.rank,
-                }
-              : null,
-            banned: member.banned,
-            banReason: member.banReason,
-            banExpires: member.banExpires ? member.banExpires.toISOString() : null,
-            mustChangePassword: member.mustChangePassword,
-            twoFactorEnabled: member.twoFactorEnabled,
-            lastSignInAt: member.lastSignInAt ? member.lastSignInAt.toISOString() : null,
-            sessionCount: member.sessionCount,
-            passkeyCount: member.passkeyCount,
-          }))}
-          invites={invites.map((invite) => ({
-            id: invite.id,
-            email: invite.email,
-            roleId: invite.roleId,
-            roleName: invite.roleName,
-            status: invite.status,
-            expiresAt: invite.expiresAt.toISOString(),
-            expired: invite.expired,
-            invitedByName: invite.invitedByName,
-          }))}
+
+      {canManage && !steppedUp ? <StepUpNotice /> : null}
+
+      {canInvite ? (
+        <Panel
+          title="Add a team member"
+          description="Invitation tokens are hashed at rest and expire automatically after seven days."
+        >
+          <InviteForm roles={roleOptions} actorRank={actor.rank ?? 0} />
+        </Panel>
+      ) : null}
+
+      <Panel
+        title={`Staff accounts (${members.length})`}
+        description="The platform refuses any change that would leave zero active administrators."
+      >
+        <MembersList
+          members={members}
+          roles={roleOptions}
+          canManage={canManage}
+          actorId={actor.user.id}
+          actorRank={actor.rank ?? 0}
         />
-      </div>
+      </Panel>
+
+      <Panel
+        title={`Invitations (${invites.length})`}
+        description="Pending, accepted, expired, and revoked invitation links."
+      >
+        <InvitesList invites={invites} canManage={canInvite} />
+      </Panel>
+
+      <Panel
+        title={`Live browser sessions (${liveSessions.length})`}
+        description="Active sessions across every staff account."
+      >
+        <LiveSessionsPanel
+          sessions={liveSessions}
+          currentSessionId={actor.session.id}
+          canManage={canManage}
+        />
+      </Panel>
     </div>
   );
 }

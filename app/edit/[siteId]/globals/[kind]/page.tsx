@@ -1,51 +1,60 @@
-import { notFound, redirect } from "next/navigation";
-import { requireActor, can } from "@/lib/auth/session";
+import { notFound } from "next/navigation";
+import { can, requireView } from "@/lib/auth/session";
 import { getSite } from "@/lib/sites";
-import { getSiteContent, GLOBAL_LABELS, type GlobalKind } from "@/lib/globals";
-import { mediaMapFor } from "@/lib/media";
+import { GLOBAL_INFO, getSiteContent } from "@/lib/globals";
+import { GLOBAL_CONTENT_KINDS, type GlobalContentKind } from "@/lib/enums";
+import { listSiteMedia, mediaPublicUrl } from "@/lib/media";
+import { toPuckData } from "@/lib/puck-data";
 import { PageEditor } from "@/components/editor/page-editor";
-import { emptyDocument } from "@/lib/documents";
-import { withPuckIds } from "@/lib/puck-data";
 
 export const dynamic = "force-dynamic";
 
-const KINDS: GlobalKind[] = ["navigation", "footer", "defaults"];
-
-export default async function EditGlobalsPage({
+export default async function EditGlobalRoute({
   params,
 }: {
   params: Promise<{ siteId: string; kind: string }>;
 }) {
-  const actor = await requireActor();
   const { siteId, kind } = await params;
-  if (!KINDS.includes(kind as GlobalKind)) notFound();
-  if (!can(actor, "editor")) redirect(`/admin/sites/${siteId}/globals`);
-  if (kind === "defaults") redirect(`/admin/sites/${siteId}/globals/defaults`);
+  if (!(GLOBAL_CONTENT_KINDS as readonly string[]).includes(kind)) notFound();
+  const globalKind = kind as GlobalContentKind;
 
+  const actor = await requireView("globals.view", `/edit/${siteId}/globals/${kind}`);
   const site = await getSite(siteId);
   if (!site) notFound();
 
-  const globalKind = kind as GlobalKind;
-  const content = await getSiteContent(siteId, globalKind);
-  const media = await mediaMapFor(siteId);
-  const document = withPuckIds(content?.draftDocument ?? content?.publishedDocument ?? emptyDocument());
+  const [content, mediaRows] = await Promise.all([
+    getSiteContent(siteId, globalKind),
+    listSiteMedia(siteId),
+  ]);
+
+  const media = mediaRows.map((row) => ({
+    id: row.id,
+    label: row.originalName,
+    url: mediaPublicUrl(row),
+    alt: row.altText,
+  }));
+
+  const info = GLOBAL_INFO[globalKind];
 
   return (
     <PageEditor
-      siteId={siteId}
+      siteId={site.id}
       siteName={site.name}
-      pageId={content?.id ?? `${siteId}-${globalKind}`}
-      title={GLOBAL_LABELS[globalKind]}
-      slug={globalKind}
-      status={content?.publishedDocument ? "published" : "draft"}
-      publishedAt={content?.publishedAt ? content.publishedAt.toISOString() : null}
-      lockVersion={content?.lockVersion ?? 0}
-      document={document}
+      mode={{
+        kind: "global",
+        globalKind,
+        label: info.label,
+      }}
+      initialTitle={info.label}
+      initialMeta={content.document.root?.props?.seo ?? {}}
+      initialData={toPuckData(content.document)}
+      initialLockVersion={content.lockVersion}
       theme={site.theme}
-      media={[...media.values()]}
-      scope={globalKind}
-      previewHref={`/preview/${siteId}/`}
-      canPublish={can(actor, "editor")}
+      media={media}
+      canEdit={can(actor, "globals.edit")}
+      canPublish={can(actor, "globals.publish")}
+      allowAdminBlocks={can(actor, "catalog.admin_blocks")}
+      previewUrl={`/preview/${site.id}/globals/${globalKind}`}
     />
   );
 }

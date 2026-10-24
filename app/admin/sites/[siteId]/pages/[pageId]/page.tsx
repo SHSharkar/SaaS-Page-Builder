@@ -1,124 +1,122 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { can, requireView } from "@/lib/auth/session";
 import { getSite } from "@/lib/sites";
 import { getPage, listVersions } from "@/lib/pages";
-import { listMedia } from "@/lib/media";
-import { requireActor } from "@/lib/auth/session";
-import { rollbackAction } from "@/lib/actions/pages";
-import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
-import { PageSettings } from "@/components/admin/page-settings";
-import { ActionButton } from "@/components/admin/action";
+import { COMPONENT_MAP } from "@/lib/registry";
+import { Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
+import { PageLifecycleBar, VersionHistoryList } from "@/components/admin/version-history";
+import { adminButtonVariants } from "@/lib/theme-classes";
 
-export const dynamic = "force-dynamic";
-
-export default async function PageSettingsPage({
+export default async function SitePageDetailRoute({
   params,
 }: {
   params: Promise<{ siteId: string; pageId: string }>;
 }) {
   const { siteId, pageId } = await params;
-  await requireActor();
-  const [site, page] = await Promise.all([getSite(siteId), getPage(siteId, pageId)]);
-  if (!site || !page) notFound();
-  const [versions, media] = await Promise.all([listVersions(pageId), listMedia(siteId)]);
+  const actor = await requireView("page.view", `/admin/sites/${siteId}/pages/${pageId}`);
+  const site = await getSite(siteId);
+  if (!site) notFound();
+  const page = await getPage(siteId, pageId);
+  if (!page) notFound();
+
+  const versions = await listVersions(siteId, pageId);
+  const serializedVersions = versions.map((version) => ({
+    id: version.id,
+    versionNumber: version.versionNumber,
+    note: version.note ?? "",
+    publishedAt: version.publishedAt.toISOString(),
+    isCurrent: version.id === page.publishedVersionId,
+    sectionCount: version.document.content?.length ?? 0,
+  }));
+
+  const draftContent = page.draftDocument.content ?? [];
 
   return (
-    <div>
-      <PageHeader
-        eyebrow={`/${page.slug}`}
-        title={page.title}
-        description="Page settings, search tags, scheduling and the full snapshot history."
-        breadcrumb={[
-          { label: site.name, href: `/admin/sites/${siteId}` },
-          { label: "Pages", href: `/admin/sites/${siteId}/pages` },
-          { label: page.title },
-        ]}
-        actions={
-          <>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-semibold text-slate-950">{page.title}</h2>
             <StatusBadge status={page.status} />
-            <a
-              href={`/preview/${siteId}/${page.slug}`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn-admin btn-admin-secondary"
-            >
-              Preview ↗
-            </a>
-            <Link href={`/edit/${siteId}/${pageId}`} className="btn-admin btn-admin-primary">
-              Open editor
-            </Link>
-          </>
-        }
-      />
-      <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
-        <PageSettings
+          </div>
+          <p className="mt-1 font-mono text-xs text-slate-400">
+            {page.slug === "/" || !page.slug ? "/ (homepage)" : page.slug} | draft lock v
+            {page.lockVersion} | updated {relativeTime(page.updatedAt)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/preview/${siteId}/${page.id}`}
+            target="_blank"
+            className={adminButtonVariants({ tone: "secondary" })}
+          >
+            Preview draft
+          </Link>
+          <Link
+            href={`/edit/${siteId}/${page.id}`}
+            className={adminButtonVariants({ tone: "primary" })}
+          >
+            Open visual editor
+          </Link>
+        </div>
+      </div>
+
+      <Panel
+        title="Publishing & lifecycle"
+        description="Every publish snapshots an immutable version; rolling back points live traffic to a previous snapshot and logs a new version entry."
+      >
+        <PageLifecycleBar
           siteId={siteId}
-          pageId={pageId}
-          page={{ title: page.title, slug: page.slug, status: page.status }}
-          seo={page.seo}
+          pageId={page.id}
           status={page.status}
-          isHomepage={page.isHomepage}
-          media={media.map((asset) => ({ id: asset.id, url: asset.publicUrl, alt: asset.altText }))}
-          scheduledPublishAt={page.scheduledPublishAt ? page.scheduledPublishAt.toISOString() : null}
-          scheduledUnpublishAt={page.scheduledUnpublishAt ? page.scheduledUnpublishAt.toISOString() : null}
+          canEdit={can(actor, "page.edit")}
+          canPublish={can(actor, "page.publish")}
+          canDelete={can(actor, "page.archive")}
+          canSaveTemplate={can(actor, "template.create")}
         />
-        <div className="space-y-5">
-          <Panel title="Version history" description="Snapshots are immutable. Rollback republishes an old one as a new version.">
-            <ol className="space-y-2">
-              {versions.map((version) => {
-                const current = version.id === page.currentPublishedVersionId;
-                return (
-                  <li key={version.id} className="rounded-lg border border-line px-3 py-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-[13px] font-semibold text-ink-900">
-                          v{version.versionNumber}
-                          {current ? <span className="badge badge-green ml-2">live</span> : null}
-                        </p>
-                        <p className="text-[11px] text-slate-400">
-                          {version.source.replace(/_/g, " ")} · {version.document.content.length} sections ·{" "}
-                          {relativeTime(version.publishedAt)}
-                        </p>
-                      </div>
-                      <ActionButton
-                        action={rollbackAction}
-                        payload={{ siteId, pageId, versionId: version.id }}
-                        className="btn-admin btn-admin-secondary !px-2.5 !py-1 !text-[11px]"
-                        pendingLabel="Rolling back…"
-                        confirm={`Roll back to version ${version.versionNumber}? It republishes that snapshot as a new version.`}
-                      >
-                        Restore
-                      </ActionButton>
-                    </div>
-                  </li>
-                );
-              })}
-              {versions.length === 0 ? (
-                <li className="text-sm text-slate-500">No snapshots yet — publish the page to create the first one.</li>
-              ) : null}
-            </ol>
+      </Panel>
+
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-5">
+          <Panel
+            title={`Working draft outline (${draftContent.length})`}
+            description="Ordered blocks currently in the draft document."
+          >
+            {draftContent.length === 0 ? (
+              <p className="text-xs text-slate-500">Draft is empty.</p>
+            ) : (
+              <ol className="divide-y divide-slate-200 text-xs">
+                {draftContent.map((block, index) => {
+                  const def = COMPONENT_MAP[block.type];
+                  return (
+                    <li
+                      key={block.props?.id ?? `${block.type}-${index}`}
+                      className="flex items-center justify-between gap-2 py-2 first:pt-0 last:pb-0"
+                    >
+                      <span className="font-medium text-slate-900">
+                        {index + 1}. {def?.label ?? block.type}
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-400">{block.type}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
           </Panel>
-          <Panel title="Concurrency" description="Every save carries the expected counter, so two editors cannot silently overwrite each other.">
-            <dl className="space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3">
-                <dt className="text-slate-500">Lock version</dt>
-                <dd className="font-mono text-ink-900">{page.lockVersion}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-slate-500">Current snapshot</dt>
-                <dd className="font-mono text-[11px] text-slate-600">
-                  {page.currentPublishedVersionId ? page.currentPublishedVersionId.slice(0, 8) : "none"}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-slate-500">Created</dt>
-                <dd className="text-slate-600">{relativeTime(page.createdAt)}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-slate-500">Last edit</dt>
-                <dd className="text-slate-600">{relativeTime(page.updatedAt)}</dd>
-              </div>
-            </dl>
+        </div>
+
+        <div className="lg:col-span-7">
+          <Panel
+            title={`Published version history (${serializedVersions.length})`}
+            description="Up to 50 historical snapshots plus the active live version are kept per page."
+          >
+            <VersionHistoryList
+              siteId={siteId}
+              pageId={page.id}
+              versions={serializedVersions}
+              canRollback={can(actor, "page.rollback")}
+            />
           </Panel>
         </div>
       </div>

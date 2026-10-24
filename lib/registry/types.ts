@@ -25,11 +25,8 @@ export type FieldDef = {
   placeholder?: string;
   help?: string;
   options?: FieldOption[];
-
   fields?: FieldDef[];
-
   defaultItem?: Record<string, unknown>;
-
   itemLabel?: (item: Record<string, unknown>, index: number) => string;
   min?: number;
   max?: number;
@@ -101,7 +98,7 @@ export const APPEARANCE_FIELDS: FieldDef[] = [
     type: "select",
     options: [
       { label: "Left", value: "left" },
-      { label: "Centre", value: "center" },
+      { label: "Center", value: "center" },
     ],
     default: "left",
   },
@@ -124,14 +121,13 @@ export type BlockDefinition<Props extends Record<string, unknown> = Record<strin
   name: string;
   group: ComponentGroup;
   description: string;
-
   summary?: string;
   fields: FieldDef[];
   defaults: Props;
   schema: z.ZodType<Props>;
   render: (props: Props & { appearance: Appearance }) => ReactNode;
   deprecated?: boolean;
-
+  adminOnly?: boolean;
   wave?: 1 | 2;
 };
 
@@ -166,9 +162,7 @@ export function fieldSchema(field: FieldDef): z.ZodTypeAny {
     case "link":
       return LINK_SCHEMA;
     case "list":
-      return z
-        .array(z.string())
-        .catch([]);
+      return z.array(z.string()).catch([]);
     case "repeater": {
       const item = z.object(
         Object.fromEntries((field.fields ?? []).map((sub) => [sub.key, fieldSchema(sub)])),

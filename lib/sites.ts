@@ -1,9 +1,32 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import "server-only";
+import { and, asc, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { domains, pages, sites, siteContents, type Domain, type Site } from "@/lib/db/schema";
+import {
+  domains,
+  importJobs,
+  mediaAssets,
+  mediaReferences,
+  pages,
+  pageVersions,
+  siteContents,
+  sites,
+  type Domain,
+  type Site,
+} from "@/lib/db/schema";
 import { DEFAULT_THEME, normalizeHostname, slugify, type SiteTheme } from "@/lib/documents";
-import { cacheGet, cacheKeys, cacheClear, cacheSet } from "@/lib/cache";
-import { assertTransition, KEEP, daysFromNow } from "@/lib/lifecycle";
+import {
+  cacheClear,
+  cacheGet,
+  cacheKeys,
+  cacheSet,
+  invalidateDomain,
+  invalidateSite,
+} from "@/lib/cache";
+import { assertTransition, daysFromNow, KEEP } from "@/lib/lifecycle";
+import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
+import { deleteObject } from "@/lib/media/storage";
+import { recordAudit } from "@/lib/audit";
+import type { Actor } from "@/lib/auth/session";
 
 export const PLATFORM_DOMAIN = process.env.PLATFORM_DOMAIN ?? "pages.trofeo.test";
 
@@ -13,21 +36,65 @@ export function platformHost(slug: string): string {
 
 export async function listSites() {
   await ensureDb();
-  return db
-    .select({
-      site: sites,
-      pageCount: sql<number>`(select count(*)::int from page p where p.site_id = ${sites.id} and p.deleted_at is null)`,
-      publishedCount: sql<number>`(select count(*)::int from page p where p.site_id = ${sites.id} and p.status = 'published' and p.deleted_at is null)`,
-      domainCount: sql<number>`(select count(*)::int from domain d where d.site_id = ${sites.id} and d.removed_at is null)`,
-    })
+  const liveSites = await db
+    .select()
     .from(sites)
-    .where(and(isNull(sites.deletedAt), sql`${sites.status} <> 'deleted'`))
+    .where(and(isNull(sites.deletedAt), ne(sites.status, "deleted")))
     .orderBy(asc(sites.name));
+  if (liveSites.length === 0) return [];
+  const siteIds = liveSites.map((s) => s.id);
+
+  const [domainRows, pageRows] = await Promise.all([
+    db
+      .select({
+        siteId: domains.siteId,
+        hostname: domains.hostname,
+        isPrimary: domains.isPrimary,
+      })
+      .from(domains)
+      .where(and(inArray(domains.siteId, siteIds), isNull(domains.removedAt)))
+      .orderBy(desc(domains.isPrimary), asc(domains.createdAt)),
+    db
+      .select({
+        siteId: pages.siteId,
+        status: pages.status,
+      })
+      .from(pages)
+      .where(and(inArray(pages.siteId, siteIds), isNull(pages.deletedAt), ne(pages.status, "deleted"))),
+  ]);
+
+  const primaryMap = new Map<string, string>();
+  const domainCountMap = new Map<string, number>();
+  for (const row of domainRows) {
+    if (!primaryMap.has(row.siteId)) primaryMap.set(row.siteId, row.hostname);
+    domainCountMap.set(row.siteId, (domainCountMap.get(row.siteId) ?? 0) + 1);
+  }
+
+  const pageCountMap = new Map<string, number>();
+  const publishedCountMap = new Map<string, number>();
+  for (const row of pageRows) {
+    pageCountMap.set(row.siteId, (pageCountMap.get(row.siteId) ?? 0) + 1);
+    if (row.status === "published") {
+      publishedCountMap.set(row.siteId, (publishedCountMap.get(row.siteId) ?? 0) + 1);
+    }
+  }
+
+  return liveSites.map((site) => ({
+    site,
+    primaryDomain: primaryMap.get(site.id) ?? null,
+    pageCount: pageCountMap.get(site.id) ?? 0,
+    publishedCount: publishedCountMap.get(site.id) ?? 0,
+    domainCount: domainCountMap.get(site.id) ?? 0,
+  }));
 }
 
 export async function getSite(siteId: string): Promise<Site | null> {
   await ensureDb();
-  const [site] = await db.select().from(sites).where(and(eq(sites.id, siteId), isNull(sites.deletedAt))).limit(1);
+  const [site] = await db
+    .select()
+    .from(sites)
+    .where(and(eq(sites.id, siteId), isNull(sites.deletedAt)))
+    .limit(1);
   return site ?? null;
 }
 
@@ -55,18 +122,28 @@ export async function getPrimarySite(): Promise<Site | null> {
 export type HostResolution = {
   site: Site;
   domain: Domain | null;
-
   canServe: boolean;
   reason?: string;
 };
+
+function isDevPreviewHost(hostname: string): boolean {
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return process.env.NODE_ENV !== "production";
+  }
+  if (hostname.endsWith(".e2b.app")) {
+    return true;
+  }
+  return false;
+}
 
 export async function resolveHost(rawHost: string): Promise<HostResolution | null> {
   await ensureDb();
   const hostname = normalizeHostname(rawHost);
   if (!hostname) return null;
 
-  const cached = cacheGet<{ siteId: string; canServe: boolean; reason?: string }>(cacheKeys.domain(hostname));
-  let resolved: { siteId: string; canServe: boolean; reason?: string } | null = cached ?? null;
+  type CachedHost = { siteId: string; canServe: boolean; reason?: string };
+  const cacheKey = cacheKeys.domain(hostname);
+  let resolved = await cacheGet<CachedHost>(cacheKey);
   let domain: Domain | null = null;
 
   if (!resolved) {
@@ -79,13 +156,18 @@ export async function resolveHost(rawHost: string): Promise<HostResolution | nul
 
     if (row) {
       domain = row.domain;
-      const canServe = row.domain.status === "active" && row.site.status === "active" && !row.site.deletedAt;
+      const canServe =
+        row.domain.status === "active" && row.site.status === "active" && !row.site.deletedAt;
       resolved = {
         siteId: row.site.id,
         canServe,
-        reason: canServe ? undefined : row.domain.status !== "active" ? "Domain verification is not complete." : "This site is not serving.",
+        reason: canServe
+          ? undefined
+          : row.domain.status !== "active"
+            ? "Domain verification is not complete."
+            : "This site is not serving.",
       };
-      cacheSet(cacheKeys.domain(hostname), resolved, 60_000);
+      await cacheSet(cacheKey, resolved, 60);
     } else if (hostname.startsWith("www.")) {
       return resolveHost(hostname.slice(4));
     }
@@ -94,10 +176,18 @@ export async function resolveHost(rawHost: string): Promise<HostResolution | nul
   let site = resolved ? await getSite(resolved.siteId) : null;
 
   if (!site) {
-    if (process.env.ALLOW_HOST_FALLBACK === "false") return null;
+    const fallbackExplicit = process.env.ALLOW_HOST_FALLBACK;
+    const allowFallback =
+      fallbackExplicit === "true" || (fallbackExplicit !== "false" && isDevPreviewHost(hostname));
+    if (!allowFallback) return null;
     site = await getPrimarySite();
     if (!site) return null;
-    return { site, domain: null, canServe: site.status === "active", reason: site.status === "active" ? undefined : "This site is not serving." };
+    return {
+      site,
+      domain: null,
+      canServe: site.status === "active",
+      reason: site.status === "active" ? undefined : "This site is not serving.",
+    };
   }
 
   return {
@@ -137,32 +227,48 @@ export type CreateSiteInput = {
 export async function createSite(input: CreateSiteInput): Promise<Site> {
   await ensureDb();
   const slug = slugify(input.slug || input.name);
-  if (!slug) throw new Error("Enter a site address.");
+  if (!slug) throw new ValidationError("Enter a site address.");
   const existing = await getSiteBySlug(slug);
-  if (existing) throw new Error(`The address "${slug}" is already in use.`);
+  if (existing) throw new ConflictError(`The address "${slug}" is already in use.`);
 
   const theme: SiteTheme = { ...DEFAULT_THEME, ...input.theme };
-  const [site] = await db
-    .insert(sites)
-    .values({ name: input.name.trim(), slug, theme, createdBy: input.createdBy })
-    .returning();
+  const site = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(sites)
+      .values({ name: input.name.trim(), slug, theme, createdBy: input.createdBy })
+      .returning();
 
-  await db.insert(siteContents).values([
-    { siteId: site.id, kind: "navigation", draftDocument: null },
-    { siteId: site.id, kind: "footer", draftDocument: null },
-    { siteId: site.id, kind: "defaults", draftDocument: null },
-  ]);
+    await tx.insert(siteContents).values([
+      { siteId: inserted.id, kind: "navigation", draftDocument: null },
+      { siteId: inserted.id, kind: "footer", draftDocument: null },
+      { siteId: inserted.id, kind: "defaults", draftDocument: null },
+    ]);
 
-  await db.insert(domains).values({
-    siteId: site.id,
-    hostname: platformHost(slug),
-    kind: "platform_subdomain",
-    status: "active",
-    verifiedAt: new Date(),
-    certificateIssuer: "lets_encrypt",
-    certificateState: "issued",
-    isPrimary: true,
-    requestedBy: input.createdBy,
+    await tx.insert(domains).values({
+      siteId: inserted.id,
+      hostname: platformHost(slug),
+      kind: "platform_subdomain",
+      status: "active",
+      verifiedAt: new Date(),
+      certificateIssuer: "lets_encrypt",
+      certificateState: "issued",
+      isPrimary: true,
+      requestedBy: input.createdBy,
+    });
+
+    if (theme.logoMediaId) {
+      await tx
+        .insert(mediaReferences)
+        .values({
+          mediaId: theme.logoMediaId,
+          siteId: inserted.id,
+          sourceType: "site_theme",
+          sourceId: inserted.id,
+        })
+        .onConflictDoNothing();
+    }
+
+    return inserted;
   });
 
   return site;
@@ -171,29 +277,72 @@ export async function createSite(input: CreateSiteInput): Promise<Site> {
 export async function updateSiteTheme(siteId: string, theme: Partial<SiteTheme>): Promise<Site> {
   await ensureDb();
   const site = await getSite(siteId);
-  if (!site) throw new Error("Site not found.");
-  const [updated] = await db
-    .update(sites)
-    .set({ theme: { ...site.theme, ...theme }, updatedAt: new Date() })
-    .where(eq(sites.id, siteId))
-    .returning();
+  if (!site) throw new NotFoundError("Site not found.");
+  const merged = { ...site.theme, ...theme };
+  const [updated] = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(sites)
+      .set({ theme: merged, updatedAt: new Date() })
+      .where(eq(sites.id, siteId))
+      .returning();
+
+    await tx
+      .delete(mediaReferences)
+      .where(
+        and(
+          eq(mediaReferences.siteId, siteId),
+          eq(mediaReferences.sourceType, "site_theme"),
+          eq(mediaReferences.sourceId, siteId),
+        ),
+      );
+    if (merged.logoMediaId) {
+      await tx
+        .insert(mediaReferences)
+        .values({
+          mediaId: merged.logoMediaId,
+          siteId,
+          sourceType: "site_theme",
+          sourceId: siteId,
+        })
+        .onConflictDoNothing();
+    }
+    return rows;
+  });
+  await invalidateSite(siteId);
   return updated;
 }
 
 export async function renameSite(siteId: string, name: string): Promise<void> {
   await ensureDb();
-  await db.update(sites).set({ name: name.trim(), updatedAt: new Date() }).where(eq(sites.id, siteId));
+  await db
+    .update(sites)
+    .set({ name: name.trim(), updatedAt: new Date() })
+    .where(eq(sites.id, siteId));
+  await invalidateSite(siteId);
 }
 
-export async function setSiteStatus(siteId: string, status: "active" | "suspended" | "deleted"): Promise<void> {
+export async function setSiteStatus(
+  siteId: string,
+  status: "active" | "suspended" | "deleted",
+): Promise<void> {
   await ensureDb();
   const site = await getSiteRow(siteId);
-  if (!site) throw new Error("Site not found.");
+  if (!site) throw new NotFoundError("Site not found.");
   assertTransition("site", site.status, status);
+  const siteDomainRows = await db
+    .select({ hostname: domains.hostname })
+    .from(domains)
+    .where(eq(domains.siteId, siteId));
+
   await db
     .update(sites)
     .set({ status, deletedAt: status === "deleted" ? new Date() : null, updatedAt: new Date() })
     .where(eq(sites.id, siteId));
+
+  await Promise.all([
+    invalidateSite(siteId),
+    ...siteDomainRows.map((d) => invalidateDomain(d.hostname)),
+  ]);
 }
 
 export async function getSiteRow(siteId: string): Promise<Site | null> {
@@ -214,43 +363,118 @@ export async function listDeletedSites() {
 export async function restoreSite(siteId: string): Promise<Site> {
   await ensureDb();
   const site = await getSiteRow(siteId);
-  if (!site) throw new Error("Site not found.");
-  if (site.status !== "deleted") throw new Error("That site is not deleted, so there is nothing to restore.");
+  if (!site) throw new NotFoundError("Site not found.");
+  if (site.status !== "deleted") {
+    throw new ValidationError("That site is not deleted, so there is nothing to restore.");
+  }
+  const siteDomainRows = await db
+    .select({ hostname: domains.hostname })
+    .from(domains)
+    .where(eq(domains.siteId, siteId));
+
   const [restored] = await db
     .update(sites)
     .set({ status: "active", deletedAt: null, updatedAt: new Date() })
     .where(eq(sites.id, siteId))
     .returning();
-  cacheClear();
+
+  await Promise.all([
+    invalidateSite(siteId),
+    ...siteDomainRows.map((d) => invalidateDomain(d.hostname)),
+  ]);
   return restored;
 }
 
-export async function purgeSite(siteId: string): Promise<void> {
+export async function purgeSite(siteId: string, actor: Actor | null = null): Promise<void> {
   await ensureDb();
   const site = await getSiteRow(siteId);
-  if (!site) throw new Error("Site not found.");
+  if (!site) throw new NotFoundError("Site not found.");
 
   if (site.status !== "deleted") {
-    throw new Error("Delete the site before purging it. Only a deleted site can be purged.");
+    throw new ValidationError("Delete the site before purging it. Only a deleted site can be purged.");
   }
+
+  const [storedMedia, siteDomainRows] = await Promise.all([
+    db
+      .select({ storageKey: mediaAssets.storageKey })
+      .from(mediaAssets)
+      .where(eq(mediaAssets.siteId, siteId)),
+    db.select({ hostname: domains.hostname }).from(domains).where(eq(domains.siteId, siteId)),
+  ]);
+
   await db.delete(sites).where(eq(sites.id, siteId));
-  cacheClear();
+
+  await Promise.all(
+    storedMedia.map(async (item) => {
+      try {
+        await deleteObject(item.storageKey);
+      } catch {
+        // Object cleanup is best-effort after row removal.
+      }
+    }),
+  );
+
+  await Promise.all([
+    cacheClear(),
+    ...siteDomainRows.map((d) => invalidateDomain(d.hostname)),
+  ]);
+
+  await recordAudit({
+    actor,
+    action: "site_purged",
+    targetType: "site",
+    targetId: siteId,
+    summary: `Permanently purged site "${site.name}" (${storedMedia.length} stored files removed)`,
+  });
 }
 
 export async function siteCounts(siteId: string) {
   await ensureDb();
-  const [row] = await db
-    .select({
-      pages: sql<number>`(select count(*)::int from page where site_id = ${siteId} and deleted_at is null)`,
-      published: sql<number>`(select count(*)::int from page where site_id = ${siteId} and status = 'published' and deleted_at is null)`,
-      drafts: sql<number>`(select count(*)::int from page where site_id = ${siteId} and status = 'draft' and deleted_at is null)`,
-      media: sql<number>`(select count(*)::int from media_asset where site_id = ${siteId} and status = 'ready')`,
-      domains: sql<number>`(select count(*)::int from domain where site_id = ${siteId} and removed_at is null)`,
-      imports: sql<number>`(select count(*)::int from import_job where site_id = ${siteId})`,
-      versions: sql<number>`(select count(*)::int from page_version v join page p on p.id = v.page_id where p.site_id = ${siteId})`,
-    })
-    .from(sql`(select 1) as t`);
-  return row;
+  const [
+    [totalPages],
+    [publishedPages],
+    [draftPages],
+    [readyMedia],
+    [liveDomains],
+    [allImports],
+    [allVersions],
+  ] = await Promise.all([
+    db
+      .select({ total: count() })
+      .from(pages)
+      .where(and(eq(pages.siteId, siteId), isNull(pages.deletedAt), ne(pages.status, "deleted"))),
+    db
+      .select({ total: count() })
+      .from(pages)
+      .where(and(eq(pages.siteId, siteId), eq(pages.status, "published"), isNull(pages.deletedAt))),
+    db
+      .select({ total: count() })
+      .from(pages)
+      .where(and(eq(pages.siteId, siteId), eq(pages.status, "draft"), isNull(pages.deletedAt))),
+    db
+      .select({ total: count() })
+      .from(mediaAssets)
+      .where(and(eq(mediaAssets.siteId, siteId), eq(mediaAssets.status, "ready"))),
+    db
+      .select({ total: count() })
+      .from(domains)
+      .where(and(eq(domains.siteId, siteId), isNull(domains.removedAt))),
+    db.select({ total: count() }).from(importJobs).where(eq(importJobs.siteId, siteId)),
+    db
+      .select({ total: count() })
+      .from(pageVersions)
+      .innerJoin(pages, eq(pages.id, pageVersions.pageId))
+      .where(eq(pages.siteId, siteId)),
+  ]);
+  return {
+    pages: Number(totalPages?.total ?? 0),
+    published: Number(publishedPages?.total ?? 0),
+    drafts: Number(draftPages?.total ?? 0),
+    media: Number(readyMedia?.total ?? 0),
+    domains: Number(liveDomains?.total ?? 0),
+    imports: Number(allImports?.total ?? 0),
+    versions: Number(allVersions?.total ?? 0),
+  };
 }
 
 export { pages };

@@ -1,27 +1,34 @@
 import Link from "next/link";
+import { adminButtonVariants } from "@/lib/theme-classes";
 
 export default function NotFound() {
   return (
-    <div className="site-scope grid min-h-screen place-items-center px-6 py-16">
-      <div className="w-full max-w-md text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--site-accent)" }}>
-          404
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
+      <div className="w-full text-center sm:w-96">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-400">
+          404 | Not published here
         </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight" style={{ fontFamily: "var(--site-font-heading)" }}>
-          This page is not available
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          That page is not live on this domain.
         </h1>
-        <p className="mt-3 text-sm leading-relaxed" style={{ color: "var(--site-muted)" }}>
-          The address you followed does not exist, is no longer published, or the site is not serving right now.
+        <p className="mt-3 text-sm leading-relaxed text-white/65">
+          Check the address, or sign in to the workspace if you expected to find a draft.
         </p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <Link href="/" className="btn btn-solid px-4 py-2 text-sm">
-            Go to the homepage
+        <div className="mt-7 flex flex-wrap justify-center gap-3">
+          <Link
+            href="/"
+            className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300"
+          >
+            Home page
           </Link>
-          <a href="https://trofeo.example/support" className="btn btn-outline px-4 py-2 text-sm">
-            Contact support
-          </a>
+          <Link
+            href="/admin"
+            className={`${adminButtonVariants({ tone: "secondary", size: "sm" })} border-white/20 bg-transparent text-white hover:bg-white/10`}
+          >
+            Staff workspace
+          </Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
