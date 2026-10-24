@@ -1,0 +1,7 @@
+preload = [
+  "./scripts/lib/server-only-stub.ts",
+  "./scripts/lib/development-env-preload.ts",
+]
+
+[install]
+exact = false

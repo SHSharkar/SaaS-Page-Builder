@@ -1,0 +1,20 @@
+FROM oven/bun:1.4.4-slim AS deps
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml ./
+COPY scripts/lib ./scripts/lib
+RUN bun install --frozen-lockfile
+
+FROM oven/bun:1.4.4-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
+COPY --chown=bun:bun package.json bun.lock bunfig.toml tsconfig.json ./
+COPY --chown=bun:bun app ./app
+COPY --chown=bun:bun lib ./lib
+COPY --chown=bun:bun messages ./messages
+COPY --chown=bun:bun drizzle ./drizzle
+COPY --chown=bun:bun scripts ./scripts
+
+USER bun
+CMD ["bun", "scripts/worker.ts"]

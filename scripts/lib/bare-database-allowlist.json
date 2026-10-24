@@ -1,0 +1,26 @@
+{
+  "allowedFiles": [
+    "app/api/health/ready/route.ts",
+    "app/server/auth/server.ts",
+    "app/server/auth/session.ts",
+    "app/server/db/client.ts",
+    "app/server/db/migrations.test.ts",
+    "app/server/db/with-account.test.ts",
+    "app/server/db/with-account.ts",
+    "app/server/domains/index.ts",
+    "app/server/platform-config/index.ts",
+    "app/server/privacy/index.ts",
+    "app/server/public-site/index.ts",
+    "app/server/realtime/publish.ts",
+    "app/server/short-links/index.ts",
+    "app/server/templates/index.ts",
+    "scripts/migrate.ts",
+    "scripts/preflight.ts",
+    "scripts/replay-erasure-log.ts",
+    "scripts/restore-backup.ts",
+    "scripts/seed-all.ts",
+    "scripts/seed-production.ts",
+    "scripts/seed-settings.ts",
+    "scripts/worker.ts"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "app/**/{page,layout,loading,error,not-found,route,default}.{ts,tsx}",
+    "scripts/*.ts",
+    "scripts/lib/*.ts",
+    "deploy/*.test.ts",
+    "e2e/**/*.ts",
+    "vitest.*.ts"
+  ],
+  "project": [
+    "app/**/*.{ts,tsx,css}",
+    "components/**/*.{ts,tsx}",
+    "hooks/**/*.{ts,tsx}",
+    "lib/**/*.{ts,tsx}",
+    "scripts/**/*.{ts,tsx}"
+  ],
+  "ignoreBinaries": ["shfmt", "shellcheck", "stripe"],
+  "ignoreExportsUsedInFile": true
+}

@@ -1,6 +1,24 @@
-export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
-  const { logger } = await import("@/lib/logger");
-  logger.info("Application runtime registered");
+export async function register(): Promise<void> {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { bootstrapEnv } = await import("@/app/server/bootstrap-env");
+    bootstrapEnv();
+  }
+}
+
+export async function onRequestError(
+  error: { digest?: string } & Error,
+  request: { path: string; method: string },
+): Promise<void> {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { logger } = await import("@/app/server/logger");
+    logger.error(
+      {
+        digest: error.digest ?? "unknown",
+        errorMessage: error.message,
+        method: request.method,
+        path: request.path,
+      },
+      "request.unhandled_error",
+    );
+  }
 }

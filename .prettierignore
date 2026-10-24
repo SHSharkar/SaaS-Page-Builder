@@ -1,0 +1,13 @@
+node_modules/
+.next/
+coverage/
+drizzle/meta/
+drizzle/*.sql
+bun.lock
+.agents/
+.claude/
+.specify/
+playwright-report/
+test-results/
+.verify-logs/
+sbom.cdx.json

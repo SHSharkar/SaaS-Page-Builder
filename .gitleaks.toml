@@ -1,0 +1,13 @@
+title = "SaaS Page Builder Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow migration SHA-256 digests recorded by verify:migrations"
+paths = [
+  '''drizzle/meta/_checksums\.json$''',
+]
+regexes = [
+  '''"[0-9a-f]{64}"''',
+]
