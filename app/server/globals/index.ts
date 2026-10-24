@@ -6,6 +6,7 @@ import { validateDocument } from "@/lib/registry";
 import { siteContents, type SiteContentRow } from "@/app/server/db/schema";
 import { withAccount } from "@/app/server/db/with-account";
 import { recordAccountAudit } from "@/app/server/audit";
+import { invalidatePublicSiteCache } from "@/app/server/public-site";
 
 export async function listSiteGlobals(
   accountId: string,
@@ -27,7 +28,7 @@ export async function publishSiteGlobal(input: {
   if (!check.valid) {
     throw new Error(check.errors.join("; "));
   }
-  return withAccount(input.accountId, async (tx) => {
+  const published = await withAccount(input.accountId, async (tx) => {
     const [existing] = await tx
       .select()
       .from(siteContents)
@@ -66,4 +67,6 @@ export async function publishSiteGlobal(input: {
     });
     return updated;
   });
+  await invalidatePublicSiteCache(input.siteId);
+  return published;
 }

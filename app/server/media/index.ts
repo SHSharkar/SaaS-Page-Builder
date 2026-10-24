@@ -1,13 +1,13 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, notExists } from "drizzle-orm";
 import sharp from "sharp";
 import {
   mediaAssets,
   mediaReferences,
   type MediaAssetRow,
 } from "@/app/server/db/schema";
-import { withAccount } from "@/app/server/db/with-account";
+import { withAccount, withPlatform } from "@/app/server/db/with-account";
 import { recordAccountAudit } from "@/app/server/audit";
 import { createPresignedUploadUrl } from "@/app/server/storage/r2";
 
@@ -180,4 +180,32 @@ export async function retireMediaAsset(input: {
     });
     return retired;
   });
+}
+
+export const MEDIA_RETENTION_DAYS = 30;
+
+export async function purgeRetiredMedia(
+  now = new Date(),
+): Promise<{ purged: number }> {
+  const cutoff = new Date(
+    now.getTime() - MEDIA_RETENTION_DAYS * 86_400 * 1_000,
+  );
+  const purged = await withPlatform((tx) =>
+    tx
+      .delete(mediaAssets)
+      .where(
+        and(
+          eq(mediaAssets.status, "deleted"),
+          lt(mediaAssets.deletedAt, cutoff),
+          notExists(
+            tx
+              .select({ id: mediaReferences.id })
+              .from(mediaReferences)
+              .where(eq(mediaReferences.mediaId, mediaAssets.id)),
+          ),
+        ),
+      )
+      .returning({ id: mediaAssets.id }),
+  );
+  return { purged: purged.length };
 }

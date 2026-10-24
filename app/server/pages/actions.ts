@@ -9,6 +9,7 @@ import {
   publishSitePage,
   rollbackPageToVersion,
   savePageDraft,
+  schedulePagePublish,
 } from "./index";
 
 export async function createPageAction(input: {
@@ -97,4 +98,24 @@ export async function rollbackPageAction(input: {
     version.id,
   ]);
   return { ok: true, versionId: version.id };
+}
+
+export async function schedulePageAction(input: {
+  siteId: string;
+  pageId: string;
+  publishAt: string | null;
+  unpublishAt: string | null;
+}): Promise<{ ok: boolean }> {
+  const actor = await requireAccountCapability("pages.publish");
+  await schedulePagePublish({
+    accountId: actor.account.id,
+    siteId: input.siteId,
+    pageId: input.pageId,
+    publishAt: input.publishAt ? new Date(input.publishAt) : null,
+    unpublishAt: input.unpublishAt ? new Date(input.unpublishAt) : null,
+  });
+  await publishAccountChange(actor.account.id, "page.scheduled", [
+    input.pageId,
+  ]);
+  return { ok: true };
 }

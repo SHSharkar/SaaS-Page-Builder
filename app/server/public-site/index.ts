@@ -7,7 +7,12 @@ import {
   type SiteTheme,
 } from "@/lib/documents";
 import { getDbPool } from "@/app/server/db/client";
-import { cacheGetJson, cacheSetJson } from "@/app/server/redis/client";
+import {
+  cacheDropIndex,
+  cacheGetJson,
+  cacheIndexAdd,
+  cacheSetJson,
+} from "@/app/server/redis/client";
 
 export interface PublicPagePayload {
   readonly siteId: string;
@@ -23,6 +28,26 @@ export interface PublicPagePayload {
   readonly footerDocument: PageDocument | null;
 }
 
+const PUBLIC_CACHE_TTL_SECONDS = 120;
+
+export function publicPageCacheKey(
+  cleanHost: string,
+  cleanSiteSlug: string,
+  cleanPageSlug: string,
+): string {
+  return `pub:page:${cleanHost || cleanSiteSlug}:${cleanPageSlug}`;
+}
+
+export function publicSiteCacheIndex(siteId: string): string {
+  return `pub:index:${siteId}`;
+}
+
+export async function invalidatePublicSiteCache(
+  siteId: string,
+): Promise<number> {
+  return cacheDropIndex(publicSiteCacheIndex(siteId));
+}
+
 export async function resolvePublishedPage(input: {
   hostname?: string | null;
   siteSlug?: string | null;
@@ -31,7 +56,7 @@ export async function resolvePublishedPage(input: {
   const cleanHost = input.hostname ? normalizeHostname(input.hostname) : "";
   const cleanSiteSlug = input.siteSlug?.trim().toLowerCase() ?? "";
   const cleanPageSlug = normalizePath(input.pageSlug ?? "/");
-  const cacheKey = `pub:page:${cleanHost || cleanSiteSlug}:${cleanPageSlug}`;
+  const cacheKey = publicPageCacheKey(cleanHost, cleanSiteSlug, cleanPageSlug);
 
   const cached = await cacheGetJson<PublicPagePayload>(cacheKey);
   if (cached) {
@@ -74,6 +99,11 @@ export async function resolvePublishedPage(input: {
     navDocument: row.nav_document,
     footerDocument: row.footer_document,
   };
-  await cacheSetJson(cacheKey, payload, 120);
+  await cacheSetJson(cacheKey, payload, PUBLIC_CACHE_TTL_SECONDS);
+  await cacheIndexAdd(
+    publicSiteCacheIndex(payload.siteId),
+    cacheKey,
+    PUBLIC_CACHE_TTL_SECONDS,
+  );
   return payload;
 }

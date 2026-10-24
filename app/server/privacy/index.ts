@@ -131,3 +131,18 @@ export async function superadminRevealGuestContact(input: {
   }
   return decryptContact(cipher);
 }
+
+export async function purgeErasedContacts(): Promise<{ removed: number }> {
+  return withPlatform(async (tx) => {
+    const entries = await tx.select().from(erasureLogs);
+    let removed = 0;
+    for (const entry of entries) {
+      const deleted = await tx
+        .delete(guestContacts)
+        .where(eq(guestContacts.lookupHash, entry.subjectLookupHash))
+        .returning({ id: guestContacts.id });
+      removed += deleted.length;
+    }
+    return { removed };
+  });
+}

@@ -4,9 +4,7 @@ export const JOB_KINDS = [
   "page.scheduled-publish",
   "page.scheduled-unpublish",
   "domain.verify",
-  "import.process",
   "media.orphan-sweep",
-  "backup.snapshot",
   "privacy.erasure",
   "sweeper.daily",
 ] as const;

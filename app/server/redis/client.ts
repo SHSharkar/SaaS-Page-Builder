@@ -64,6 +64,27 @@ export async function cacheDelKeys(...keys: string[]): Promise<void> {
   await getRedisClient().del(...keys);
 }
 
+export async function cacheIndexAdd(
+  indexKey: string,
+  cacheKey: string,
+  ttlSeconds: number,
+): Promise<void> {
+  const client = getRedisClient();
+  const ttl = Math.max(1, Math.trunc(ttlSeconds));
+  await client.sadd(indexKey, cacheKey);
+  await client.expire(indexKey, ttl);
+}
+
+export async function cacheDropIndex(indexKey: string): Promise<number> {
+  const client = getRedisClient();
+  const members = await client.smembers(indexKey);
+  if (members.length > 0) {
+    await client.del(...members);
+  }
+  await client.del(indexKey);
+  return members.length;
+}
+
 export async function consumeSlidingBudget(
   key: string,
   limit: number,

@@ -13,9 +13,12 @@ const mockPublishPage = vi.fn(async (_input: unknown) => ({
   versionNumber: 1,
 }));
 
+const mockSchedulePage = vi.fn(async (_input: unknown) => ({ ok: true }));
+
 vi.mock("@/app/server/pages/actions", () => ({
   saveDraftAction: (input: unknown) => mockSaveDraft(input),
   publishPageAction: (input: unknown) => mockPublishPage(input),
+  schedulePageAction: (input: unknown) => mockSchedulePage(input),
 }));
 
 describe("PageStudioClient", () => {
@@ -70,6 +73,35 @@ describe("PageStudioClient", () => {
     fireEvent.click(publishBtn);
     await waitFor(() =>
       expect(screen.getByText("Publish conflict")).toBeDefined(),
+    );
+
+    fireEvent.change(screen.getByLabelText("Publish date"), {
+      target: { value: "2026-11-01" },
+    });
+    fireEvent.change(screen.getByLabelText("Publication time"), {
+      target: { value: "09:30" },
+    });
+    const scheduleBtn = screen.getByRole("button", { name: "Schedule" });
+    await waitFor(() =>
+      expect(scheduleBtn.hasAttribute("disabled")).toBe(false),
+    );
+    fireEvent.submit(scheduleBtn.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(mockSchedulePage).toHaveBeenCalled());
+    expect(mockSchedulePage.mock.calls[0]?.[0]).toMatchObject({
+      pageId: "page-1",
+      siteId: "site-1",
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Publication scheduled")).toBeDefined(),
+    );
+
+    mockSchedulePage.mockRejectedValueOnce(new Error("Schedule conflict"));
+    await waitFor(() =>
+      expect(scheduleBtn.hasAttribute("disabled")).toBe(false),
+    );
+    fireEvent.submit(scheduleBtn.closest("form") as HTMLFormElement);
+    await waitFor(() =>
+      expect(screen.getByText("Schedule conflict")).toBeDefined(),
     );
   });
 });

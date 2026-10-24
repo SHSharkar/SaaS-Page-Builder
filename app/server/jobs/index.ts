@@ -1,6 +1,7 @@
 import "server-only";
 import { PgBoss } from "pg-boss";
 import { JOB_KINDS, type JobKind } from "@/lib/enums";
+import { JOB_SCHEDULES } from "./handlers";
 import { getEnv } from "@/app/server/env";
 import { logger } from "@/app/server/logger";
 
@@ -42,15 +43,6 @@ export const QUEUE_POLICY_MAP: Readonly<Record<JobKind, QueuePolicyConfig>> = {
     expireInSeconds: 120,
     retentionSeconds: 7 * 86_400,
   },
-  "import.process": {
-    name: "import.process",
-    deadLetter: "import.process.dlq",
-    retryLimit: 3,
-    retryDelay: 30,
-    retryBackoff: true,
-    expireInSeconds: 300,
-    retentionSeconds: 7 * 86_400,
-  },
   "media.orphan-sweep": {
     name: "media.orphan-sweep",
     deadLetter: "media.orphan-sweep.dlq",
@@ -59,15 +51,6 @@ export const QUEUE_POLICY_MAP: Readonly<Record<JobKind, QueuePolicyConfig>> = {
     retryBackoff: true,
     expireInSeconds: 300,
     retentionSeconds: 7 * 86_400,
-  },
-  "backup.snapshot": {
-    name: "backup.snapshot",
-    deadLetter: "backup.snapshot.dlq",
-    retryLimit: 2,
-    retryDelay: 120,
-    retryBackoff: true,
-    expireInSeconds: 900,
-    retentionSeconds: 14 * 86_400,
   },
   "privacy.erasure": {
     name: "privacy.erasure",
@@ -117,6 +100,12 @@ export async function createConfiguredPgBoss(): Promise<PgBoss> {
     });
   }
   return boss;
+}
+
+export async function ensureScheduledJobs(boss: PgBoss): Promise<void> {
+  for (const schedule of JOB_SCHEDULES) {
+    await boss.schedule(schedule.kind, schedule.cron, { source: "schedule" });
+  }
 }
 
 export async function enqueueRunOnceJob(
