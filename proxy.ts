@@ -1,12 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { normalizeAdminPath } from "@/app/lib/admin-path";
 import { isCrawlerUserAgent } from "@/lib/crawler-agents";
+import {
+  CLIENT_IP_HEADER,
+  DOMAIN_ID_HEADER,
+  NONCE_HEADER,
+} from "@/lib/request-headers";
 import { normalizeHostname } from "@/lib/documents";
 import { isShortLinkPathname } from "@/lib/short-paths";
 
-export const DOMAIN_ID_HEADER = "x-spb-domain-host";
-export const NONCE_HEADER = "x-nonce";
-export const CLIENT_IP_HEADER = "x-spb-client-ip";
+export { CLIENT_IP_HEADER, DOMAIN_ID_HEADER, NONCE_HEADER };
 
 export const SESSION_COOKIE_NAMES = [
   "spb.session_token",

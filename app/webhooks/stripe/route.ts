@@ -4,7 +4,7 @@ import { problemResponse } from "@/app/server/api/problem";
 import { getEnv } from "@/app/server/env";
 import {
   claimWebhookEventOnce,
-  verifyHmacWebhookSignature,
+  verifyStripeWebhookSignature,
 } from "@/app/server/webhooks";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const env = getEnv();
 
   if (
-    !verifyHmacWebhookSignature({
+    !verifyStripeWebhookSignature({
       rawBody,
       secret: env.STRIPE_WEBHOOK_SECRET,
       signatureHeader,

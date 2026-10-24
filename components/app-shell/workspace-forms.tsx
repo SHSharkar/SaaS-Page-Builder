@@ -270,10 +270,7 @@ export function PrivacyErasureFormClient() {
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     startTransition(async () => {
-      await requestContactErasureAction({
-        clientKey: rawContact.trim().slice(0, 16) || "guest",
-        rawContact,
-      });
+      await requestContactErasureAction({ rawContact });
       setSubmitted(true);
       setRawContact("");
     });

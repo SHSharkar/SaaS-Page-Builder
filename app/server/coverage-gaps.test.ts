@@ -22,11 +22,13 @@ import {
   listSiteImports,
 } from "@/app/server/imports";
 import {
-  isPrimaryPlatformHost,
-  listSiteDomains,
-  markDomainVerified,
   checkTlsDomainAllowed,
   connectCustomDomain,
+  isPrimaryPlatformHost,
+  listSiteDomains,
+  verificationRecordName,
+  verifyCustomDomain,
+  verifyDomainOwnership,
 } from "@/app/server/domains";
 import {
   listSiteMedia,
@@ -91,10 +93,7 @@ describe("privacy, realtime, storage, webhook dedup, and guard coverage", () => 
     });
     expect(revealed.contact).toBe(rawContact);
 
-    const erased = await requestContactErasureAction({
-      clientKey: crypto.randomUUID(),
-      rawContact,
-    });
+    const erased = await requestContactErasureAction({ rawContact });
     expect(erased.erasedCount).toBe(1);
 
     const erasureLogs = await listPlatformErasureLogs();
@@ -274,12 +273,51 @@ describe("privacy, realtime, storage, webhook dedup, and guard coverage", () => 
       }),
     ).rejects.toThrow("valid custom domain");
     await expect(
-      markDomainVerified({
+      verifyCustomDomain({
         accountId: ctx.account.id,
         actorUserId: ctx.user.id,
         domainId: crypto.randomUUID(),
       }),
     ).rejects.toThrow("Domain not found");
+
+    const connected = await connectCustomDomain({
+      accountId: ctx.account.id,
+      actorUserId: ctx.user.id,
+      hostname: `verify-${crypto.randomUUID().slice(0, 8)}.example.test`,
+      siteId,
+    });
+    expect(verificationRecordName(connected.hostname)).toBe(
+      `_spb-verify.${connected.hostname}`,
+    );
+
+    const failedVerification = await verifyCustomDomain({
+      accountId: ctx.account.id,
+      actorUserId: ctx.user.id,
+      domainId: connected.id,
+      lookupTxt: async () => [["unrelated-value"]],
+    });
+    expect(failedVerification.verified).toBe(false);
+    expect(failedVerification.domain.status).toBe("failed");
+
+    const verified = await verifyCustomDomain({
+      accountId: ctx.account.id,
+      actorUserId: ctx.user.id,
+      domainId: connected.id,
+      lookupTxt: async () => [[connected.verificationToken ?? ""]],
+    });
+    expect(verified.verified).toBe(true);
+    expect(verified.domain.status).toBe("active");
+    expect(verified.domain.certificateState).toBe("pending");
+
+    const unreachable = await verifyDomainOwnership({
+      hostname: "unreachable.example.test",
+      token: "spb-verify=none",
+      lookupTxt: async () => {
+        throw new Error("ENOTFOUND");
+      },
+    });
+    expect(unreachable.verified).toBe(false);
+    expect(unreachable.observedValues).toEqual([]);
 
     await setPlatformSetting({
       isSecret: false,
