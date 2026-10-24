@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32" fill="none">
+  <rect width="32" height="32" rx="8" fill="#1d4ed8"/>
+  <path d="M9 11h14v3H9v-3zm0 7h10v3H9v-3z" fill="#fff"/>
+  <text x="40" y="21" fill="#0f172a" font-family="sans-serif" font-size="14" font-weight="700">SPB</text>
+</svg>

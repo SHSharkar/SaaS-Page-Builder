@@ -1,37 +1,43 @@
 @import "tailwindcss";
 
+:root {
+  --surface-canvas: #f8fafc;
+  --surface-card: #fff;
+  --surface-muted: #f1f5f9;
+  --surface-accent: #1d4ed8;
+  --surface-danger: #b91c1c;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-on-accent: #fff;
+  --border-subtle: #cbd5e1;
+}
+
+.dark {
+  --surface-canvas: #0b1120;
+  --surface-card: #111827;
+  --surface-muted: #1e293b;
+  --surface-accent: #60a5fa;
+  --surface-danger: #f87171;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-on-accent: #0b1120;
+  --border-subtle: #334155;
+}
+
 @theme {
-  --color-ink-950: #070b14;
-  --color-ink-900: #0b1120;
-  --color-ink-850: #0f1728;
-  --color-ink-800: #121a2b;
-  --color-ink-700: #1b2438;
-  --color-ink-600: #2a3550;
-  --color-ink-500: #3d4a68;
-  --color-gold-500: #c8a24a;
-  --color-gold-400: #d9b968;
-  --color-gold-300: #ecd8a4;
-  --color-paper: #f6f7f9;
-  --color-line: #e4e7ec;
+  --color-canvas: var(--surface-canvas);
+  --color-card: var(--surface-card);
+  --color-muted: var(--surface-muted);
+  --color-accent: var(--surface-accent);
+  --color-danger: var(--surface-danger);
+  --color-ink: var(--text-primary);
+  --color-subtle: var(--text-secondary);
+  --color-on-accent: var(--text-on-accent);
+  --color-border-subtle: var(--border-subtle);
+}
 
-  --color-site-accent: #c8a24a;
-  --color-site-accent-contrast: #0b1120;
-  --color-site-bg: #0b1120;
-  --color-site-surface: #121a2b;
-  --color-site-text: #f4f6fb;
-  --color-site-muted: #9aa4bb;
-  --color-site-border: #243049;
-
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-heading: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-editorial: "Fraunces", "Iowan Old Style", Georgia, serif;
-  --font-modern: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-geometric: "Space Grotesk", "Inter", -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --radius-site-sm: 6px;
-  --radius-site-md: 10px;
-  --radius-site-lg: 16px;
-
-  --shadow-modal: 0 24px 64px -12px rgba(7, 11, 20, 0.42);
+.spb-root-body {
+  background-color: var(--surface-canvas);
+  color: var(--text-primary);
+  min-height: 100vh;
 }

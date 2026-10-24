@@ -1,23 +1,28 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Trofeo Pages",
-    template: "%s | Trofeo Pages",
+    default: "SaaS Page Builder",
+    template: "%s | SaaS Page Builder",
   },
   description:
-    "Self-hosted multi-brand page builder and publishing platform.",
+    "Multi-tenant SaaS page builder with visual block composition, custom domains, and Row-Level Security.",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  readonly children: ReactNode;
+}) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full bg-slate-50 font-sans text-slate-900">{children}</body>
+    <html lang="en">
+      <body className="spb-root-body antialiased">
+        {children}
+        <Toaster />
+      </body>
     </html>
   );
 }

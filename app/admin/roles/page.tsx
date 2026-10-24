@@ -1,35 +1,35 @@
-import { can, hasRecentStepUp, requireView } from "@/lib/auth/session";
-import { permissionsByGroup } from "@/lib/auth/permissions";
-import { listRoles } from "@/lib/auth/rbac";
-import { PageHeader } from "@/components/admin/ui";
-import { StepUpNotice } from "@/components/admin/step-up-notice";
-import { RolesDesigner } from "@/components/admin/roles-client";
+import { listPlatformRoles } from "@/app/server/admin";
+import { requirePlatformPageCapability } from "@/app/server/auth/guards";
+import { getTranslations } from "@/app/server/text";
+import { Badge, Stack, Surface, Text } from "@/components/ui";
 
-export default async function RolesPage() {
-  const actor = await requireView("role.view", "/admin/roles");
-  const [roles, groups, steppedUp] = await Promise.all([
-    listRoles(),
-    Promise.resolve(permissionsByGroup()),
-    hasRecentStepUp(actor),
-  ]);
-  const canManage = can(actor, "role.manage");
+export default async function AdminRolesPage() {
+  await requirePlatformPageCapability("platform.console.view");
+  const rows = await listPlatformRoles();
+  const t = getTranslations();
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Access control"
-        title="Roles & permissions"
-        description="Built-in and custom staff roles. No account can edit or assign a role ranked higher than its own."
-      />
-
-      {canManage && !steppedUp ? <StepUpNotice /> : null}
-
-      <RolesDesigner
-        roles={roles}
-        groups={groups}
-        actorRank={actor.rank ?? 0}
-        canManage={canManage}
-      />
-    </div>
+    <Stack gap="lg">
+      <Text as="h1" variant="display">
+        {t("admin.rolesHeading")}
+      </Text>
+      <Stack gap="sm">
+        {rows.map((role) => (
+          <Surface key={role.id}>
+            <Stack align="between" direction="row" gap="sm">
+              <Stack gap="sm">
+                <Text as="h2" variant="subheading">
+                  {role.name}
+                </Text>
+                <Text tone="secondary" variant="caption">
+                  {role.description}
+                </Text>
+              </Stack>
+              <Badge tone="accent">{role.key}</Badge>
+            </Stack>
+          </Surface>
+        ))}
+      </Stack>
+    </Stack>
   );
 }

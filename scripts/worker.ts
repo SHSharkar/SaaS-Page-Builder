@@ -1,26 +1,58 @@
-import { logger } from "@/lib/logger";
-import { startWorkerProcess } from "@/lib/queue";
-import { closeDb } from "@/lib/db";
+import os from "node:os";
+import { workerHeartbeats } from "../app/server/db/schema";
+import { withPlatform } from "../app/server/db/with-account";
+import { createConfiguredPgBoss } from "../app/server/jobs";
+import { logger } from "../app/server/logger";
+import { purgeExpiredKeepWindows } from "../app/server/sweeper";
+import { JOB_KINDS } from "../lib/enums";
+import { isMainModule } from "./lib/check";
 
-async function main() {
-  const boss = await startWorkerProcess();
-  logger.info("Background worker started and listening on all queues");
-
-  let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    logger.info({ signal }, "Shutting down background worker gracefully");
-    await boss.stop({ graceful: true, timeout: 30_000 });
-    await closeDb();
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGINT", () => void shutdown("SIGINT"));
+export async function recordHeartbeat(
+  workerId: string,
+  claimingWork = true,
+): Promise<void> {
+  await withPlatform((tx) =>
+    tx
+      .insert(workerHeartbeats)
+      .values({ workerId, claimingWork, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: workerHeartbeats.workerId,
+        set: { claimingWork, updatedAt: new Date() },
+      }),
+  );
 }
 
-main().catch((err) => {
-  logger.fatal({ err }, "Worker startup failed");
-  process.exit(1);
-});
+export async function startWorkerRuntime(): Promise<() => Promise<void>> {
+  const workerId = `${os.hostname()}-${process.pid}`;
+  const boss = await createConfiguredPgBoss();
+
+  for (const kind of JOB_KINDS) {
+    await boss.work(kind, async () => {
+      if (kind === "sweeper.daily") {
+        await purgeExpiredKeepWindows();
+      }
+      logger.info({ kind, workerId }, "worker.job_completed");
+    });
+  }
+
+  await recordHeartbeat(workerId, true);
+  const timer = setInterval(() => {
+    void recordHeartbeat(workerId, true);
+  }, 15_000);
+
+  return async () => {
+    clearInterval(timer);
+    await recordHeartbeat(workerId, false);
+    await boss.stop({ graceful: true, timeout: 10_000 });
+  };
+}
+
+if (isMainModule(import.meta.url)) {
+  void startWorkerRuntime().then((stop) => {
+    const shutdown = () => {
+      void stop().finally(() => process.exit(0));
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+  });
+}

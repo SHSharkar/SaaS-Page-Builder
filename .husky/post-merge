@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+changed=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null || true)
+
+if printf '%s\n' "$changed" | grep -Eq '^bun\.lock$'; then
+  printf '[INFO] bun.lock changed; running bun install --frozen-lockfile\n'
+  bun install --frozen-lockfile
+fi
+
+if printf '%s\n' "$changed" | grep -Eq '^drizzle/'; then
+  printf '[INFO] drizzle migrations changed; running bun run db:migrate\n'
+  bun run db:migrate
+fi
