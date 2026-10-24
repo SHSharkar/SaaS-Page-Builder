@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { SignInForm } from "@/components/auth/sign-in-form";
+import { PasskeySignInButton } from "@/components/auth/passkey-sign-in";
 import { getActor } from "@/lib/auth/session";
 import { DEMO_ACCOUNTS } from "@/lib/demo-accounts";
 
@@ -31,7 +32,15 @@ export default async function SignInPage({
         </>
       }
     >
-      <SignInForm demo={demo} next={target} />
+      <div className="space-y-5">
+        <SignInForm demo={demo} next={target} />
+        <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.12em] text-slate-400">
+          <span className="h-px flex-1 bg-line" />
+          or
+          <span className="h-px flex-1 bg-line" />
+        </div>
+        <PasskeySignInButton next={target} />
+      </div>
     </AuthShell>
   );
 }

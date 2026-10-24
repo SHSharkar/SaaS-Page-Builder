@@ -1,12 +1,4 @@
-/**
- * Authorization, from the database.
- *
- * The permission catalogue is code (`lib/auth/permissions.ts`); the roles that
- * grant those permissions, and who holds them, are rows. Every guard in the app
- * calls `requirePermission`, so an admin can shape access in `/admin/roles`
- * without a deploy, and no module compares a role name to a string.
- */
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import {
   permissions,
@@ -14,36 +6,18 @@ import {
   roles,
   sessions,
   staffInvites,
-  userRoles,
   users,
-  type Permission,
   type Role,
-  type SessionRecord,
 } from "@/lib/db/schema";
-import {
-  PERMISSIONS,
-  SYSTEM_ROLES,
-  isKnownPermission,
-  permissionsForRole,
-  type PermissionDef,
-} from "./permissions";
+import { PERMISSIONS, SYSTEM_ROLES, isKnownPermission, permissionsForRole } from "./permissions";
+import { staffManagerIds } from "./server";
 
 export type RoleWithCounts = Role & { memberCount: number; permissionCount: number };
 
-/**
- * Makes the database match the catalogue. Idempotent: missing permissions are
- * inserted, changed labels are updated, and the three system roles keep exactly
- * the permissions their definition names (a custom role is never touched).
- */
 export async function syncRbacCatalog(): Promise<void> {
   await ensureDb();
 
   for (const [index, definition] of PERMISSIONS.entries()) {
-    const existing = await db
-      .select({ id: permissions.id })
-      .from(permissions)
-      .where(eq(permissions.key, definition.key))
-      .limit(1);
     const values = {
       key: definition.key,
       groupKey: definition.group,
@@ -52,14 +26,18 @@ export async function syncRbacCatalog(): Promise<void> {
       dangerous: definition.dangerous ?? false,
       sortOrder: index,
     };
-    if (existing.length) {
-      await db.update(permissions).set(values).where(eq(permissions.id, existing[0].id));
+    const [existing] = await db
+      .select({ id: permissions.id })
+      .from(permissions)
+      .where(eq(permissions.key, definition.key))
+      .limit(1);
+    if (existing) {
+      await db.update(permissions).set(values).where(eq(permissions.id, existing.id));
     } else {
       await db.insert(permissions).values(values);
     }
   }
 
-  // A permission removed from the catalogue is removed from every role too.
   const known = new Set(PERMISSIONS.map((permission) => permission.key));
   const stored = await db.select({ id: permissions.id, key: permissions.key }).from(permissions);
   for (const row of stored) {
@@ -91,10 +69,6 @@ export async function syncRbacCatalog(): Promise<void> {
         .returning();
     }
 
-    // Administrator always holds the whole catalogue, including keys added by
-    // a later deploy. Editor and Viewer are seeded exactly once, from their
-    // definition; after that the matrix in /admin/roles owns them, so an admin
-    // can narrow a role without the next boot undoing it.
     if (role.permissionsSeeded && definition.key !== "admin") continue;
 
     const wanted = permissionsForRole(definition);
@@ -120,27 +94,38 @@ export async function syncRbacCatalog(): Promise<void> {
 
     if (!role.permissionsSeeded) {
       await db.update(roles).set({ permissionsSeeded: true }).where(eq(roles.id, role.id));
-      role.permissionsSeeded = true;
     }
   }
+
+  await refreshStaffManagers();
+}
+
+export async function refreshStaffManagers(): Promise<void> {
+  await ensureDb();
+  const rows = await db
+    .selectDistinct({ userId: users.id })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+    .where(and(eq(users.banned, false), inArray(permissions.key, ["staff.manage", "role.manage"])));
+  staffManagerIds.length = 0;
+  staffManagerIds.push(...rows.map((row) => row.userId));
 }
 
 export async function listRoles(): Promise<RoleWithCounts[]> {
   await ensureDb();
   const rows = await db.select().from(roles).orderBy(sql`${roles.rank} desc`, asc(roles.name));
-  const memberCounts = await db
-    .select({ roleId: userRoles.roleId, total: count() })
-    .from(userRoles)
-    .groupBy(userRoles.roleId);
+  const memberCounts = await db.select({ role: users.role, total: count() }).from(users).groupBy(users.role);
   const permissionCounts = await db
     .select({ roleId: rolePermissions.roleId, total: count() })
     .from(rolePermissions)
     .groupBy(rolePermissions.roleId);
-  const members = new Map(memberCounts.map((row) => [row.roleId, Number(row.total)]));
+  const members = new Map(memberCounts.map((row) => [row.role, Number(row.total)]));
   const grants = new Map(permissionCounts.map((row) => [row.roleId, Number(row.total)]));
   return rows.map((role) => ({
     ...role,
-    memberCount: members.get(role.id) ?? 0,
+    memberCount: members.get(role.key) ?? 0,
     permissionCount: grants.get(role.id) ?? 0,
   }));
 }
@@ -167,7 +152,7 @@ export async function rolePermissionKeys(roleId: string): Promise<string[]> {
   return rows.map((row) => row.key).sort();
 }
 
-export async function permissionMatrix(): Promise<Permission[]> {
+export async function permissionMatrix() {
   await ensureDb();
   return db.select().from(permissions).orderBy(asc(permissions.sortOrder));
 }
@@ -249,9 +234,7 @@ export async function setRolePermissions(
 
   for (const permission of wanted) {
     if (!currentIds.has(permission.id)) {
-      await db
-        .insert(rolePermissions)
-        .values({ roleId, permissionId: permission.id, grantedBy: actorId });
+      await db.insert(rolePermissions).values({ roleId, permissionId: permission.id, grantedBy: actorId });
     }
   }
   const wantedIds = new Set(wanted.map((permission) => permission.id));
@@ -262,6 +245,7 @@ export async function setRolePermissions(
         .where(and(eq(rolePermissions.roleId, roleId), eq(rolePermissions.permissionId, permissionId)));
     }
   }
+  await refreshStaffManagers();
   return wanted.map((permission) => permission.key).sort();
 }
 
@@ -270,7 +254,7 @@ export async function deleteRole(roleId: string, actorId: string | null): Promis
   const role = await getRole(roleId);
   if (!role) throw new Error("Role not found.");
   if (role.isSystem) throw new Error("System roles cannot be deleted. Edit their permissions instead.");
-  const members = await db.select({ id: userRoles.userId }).from(userRoles).where(eq(userRoles.roleId, roleId));
+  const members = await db.select({ id: users.id }).from(users).where(eq(users.role, role.key));
   if (members.length) throw new Error("Move the people on this role to another role first.");
   const invites = await db
     .select({ id: staffInvites.id })
@@ -279,95 +263,91 @@ export async function deleteRole(roleId: string, actorId: string | null): Promis
   if (invites.length) throw new Error("Revoke the pending invitations that use this role first.");
   await db.delete(roles).where(eq(roles.id, roleId));
   void actorId;
+  await refreshStaffManagers();
 }
 
 export async function rolesForUser(userId: string): Promise<Role[]> {
   await ensureDb();
-  const rows = await db
-    .select({ role: roles })
-    .from(userRoles)
-    .innerJoin(roles, eq(roles.id, userRoles.roleId))
-    .where(eq(userRoles.userId, userId))
-    .orderBy(sql`${roles.rank} desc`, asc(roles.name));
-  return rows.map((row) => row.role);
+  const [user] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) return [];
+  const role = await getRoleByKey(user.role);
+  return role ? [role] : [];
 }
 
 export async function permissionKeysForUser(userId: string): Promise<string[]> {
   await ensureDb();
-  const rows = await db
+  return db
     .select({ key: permissions.key })
-    .from(userRoles)
-    .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
     .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
-    .where(eq(userRoles.userId, userId));
-  return [...new Set(rows.map((row) => row.key))].sort();
+    .where(eq(users.id, userId))
+    .then((rows) => rows.map((row) => row.key));
 }
 
-export async function setUserRoles(userId: string, roleIds: string[], assignedBy: string | null): Promise<void> {
-  await ensureDb();
-  const unique = [...new Set(roleIds)];
-  if (unique.length) {
-    const found = await db.select({ id: roles.id }).from(roles).where(inArray(roles.id, unique));
-    if (found.length !== unique.length) throw new Error("One of those roles no longer exists.");
-  }
-  const current = await db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId));
-  const currentIds = new Set(current.map((row) => row.roleId));
-  for (const roleId of unique) {
-    if (!currentIds.has(roleId)) {
-      await db.insert(userRoles).values({ userId, roleId, assignedBy });
-    }
-  }
-  for (const roleId of currentIds) {
-    if (!unique.includes(roleId)) {
-      await db.delete(userRoles).where(and(eq(userRoles.userId, userId), eq(userRoles.roleId, roleId)));
-    }
-  }
-}
-
-/** How many active people hold a role at or above this rank. Used for the last-admin guard. */
 export async function countActiveStaffAtRank(rank: number, excludeUserId?: string): Promise<number> {
   await ensureDb();
   const rows = await db
-    .select({ userId: users.id, rank: roles.rank })
-    .from(userRoles)
-    .innerJoin(roles, eq(roles.id, userRoles.roleId))
-    .innerJoin(users, eq(users.id, userRoles.userId))
-    .where(eq(users.status, "active"));
-  const people = new Set(
-    rows.filter((row) => row.rank >= rank && row.userId !== excludeUserId).map((row) => row.userId),
-  );
-  return people.size;
+    .select({ id: users.id })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(and(eq(users.banned, false), sql`${roles.rank} >= ${rank}`));
+  return rows.filter((row) => row.id !== excludeUserId).length;
 }
 
-export type GlobalSession = SessionRecord & { user: { id: string; name: string; email: string } };
+export function permissionDefinition(key: string) {
+  return PERMISSIONS.find((permission) => permission.key === key);
+}
 
-export async function listSessions(filter: { userId?: string } = {}): Promise<GlobalSession[]> {
+export type SessionRow = {
+  id: string;
+  token: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  impersonatedBy: string | null;
+  user: { id: string; name: string; email: string; role: string };
+};
+
+export async function listSessions(options: { userId?: string; exclude?: string } = {}): Promise<SessionRow[]> {
   await ensureDb();
-  const query = db
+  const filters = [sql`${sessions.expiresAt} > now()`];
+  if (options.userId) filters.push(eq(sessions.userId, options.userId));
+  if (options.exclude) filters.push(ne(sessions.id, options.exclude));
+  const rows = await db
     .select({
-      session: sessions,
+      id: sessions.id,
+      token: sessions.token,
+      ipAddress: sessions.ipAddress,
+      userAgent: sessions.userAgent,
+      createdAt: sessions.createdAt,
+      expiresAt: sessions.expiresAt,
+      impersonatedBy: sessions.impersonatedBy,
       userId: users.id,
       name: users.name,
       email: users.email,
+      role: users.role,
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .$dynamic();
-  const rows = await (filter.userId ? query.where(eq(sessions.userId, filter.userId)) : query).orderBy(
-    sql`${sessions.createdAt} desc`,
-  );
+    .where(and(...filters))
+    .orderBy(desc(sessions.createdAt));
   return rows.map((row) => ({
-    ...row.session,
-    user: { id: row.userId, name: row.name, email: row.email },
+    id: row.id,
+    token: row.token,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    impersonatedBy: row.impersonatedBy,
+    user: { id: row.userId, name: row.name, email: row.email, role: row.role },
   }));
 }
 
-export async function revokeSessionById(sessionId: string): Promise<void> {
+export async function revokeSessionById(sessionId: string): Promise<boolean> {
   await ensureDb();
-  await db.delete(sessions).where(eq(sessions.id, sessionId));
-}
-
-/** The permission descriptor, for labels in error messages and the matrix. */
-export function permissionDefinition(key: string): PermissionDef | undefined {
-  return PERMISSIONS.find((permission) => permission.key === key);
+  const result = await db.delete(sessions).where(eq(sessions.id, sessionId));
+  return (result.rowCount ?? 0) > 0;
 }

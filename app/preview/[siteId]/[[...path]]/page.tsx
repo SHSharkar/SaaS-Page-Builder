@@ -21,7 +21,7 @@ export default async function PreviewPage({
   const { siteId, path = [] } = await params;
   const actor = await getActor();
   if (!actor) redirect(`/sign-in?next=/preview/${siteId}`);
-  if (actor.user.status !== "active") notFound();
+  if (actor.user.banned) notFound();
 
   const site = await getSite(siteId);
   if (!site) notFound();

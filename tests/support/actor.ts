@@ -23,6 +23,7 @@ export async function actorForEmail(email: string): Promise<Actor> {
       ipAddress: null,
       userAgent: "vitest",
       stepUpUntil: new Date(Date.now() + 3_600_000),
+      impersonatedBy: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     },

@@ -1,98 +1,113 @@
-/**
- * Server-side account writes that Better Auth does not expose for an
- * invite-only deployment: creating the account row, the credential row and the
- * role assignments in one place, and revoking sessions when an account is
- * suspended.
- */
-import { and, eq } from "drizzle-orm";
-import { db, ensureDb } from "@/lib/db";
-import { accounts, sessions, userRoles, users } from "@/lib/db/schema";
-import { hashPassword } from "./password";
-import { setUserRoles } from "./rbac";
+import { eq } from "drizzle-orm";
+import type { HeadersInit } from "undici-types";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+import { auth } from "./server";
+import { refreshStaffManagers } from "./rbac";
 
-export type CreateAccountInput = {
+type RequestHeaders = Awaited<ReturnType<typeof import("next/headers").headers>>;
+type PluginRole = "admin" | "user" | ("admin" | "user")[] | undefined;
+
+function pluginRole(key: string): "admin" | "user" {
+  return key as "admin" | "user";
+}
+
+export async function createAccount(input: {
   name: string;
   email: string;
   password: string;
-  roleIds: string[];
-  mustChangePassword?: boolean;
-  createdBy?: string | null;
-};
-
-export async function createAccount(input: CreateAccountInput) {
-  await ensureDb();
-  const email = input.email.trim().toLowerCase();
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-  if (existing) throw new Error("That email already has an account.");
-
-  const [user] = await db
-    .insert(users)
-    .values({
+  roleKey: string;
+  mustChangePassword: boolean;
+  headers: HeadersInit | RequestHeaders;
+}) {
+  const created = await auth.api.createUser({
+    body: {
       name: input.name.trim(),
-      email,
-      emailVerified: true,
-      status: "active",
-      mustChangePassword: input.mustChangePassword ?? true,
-    })
-    .returning();
-
-  // The credential row is Better Auth's own shape: providerId "credential"
-  // with the account id equal to the user id is how the library looks it up.
-  await db.insert(accounts).values({
-    accountId: user.id,
-    providerId: "credential",
-    userId: user.id,
-    password: hashPassword(input.password),
+      email: input.email.trim().toLowerCase(),
+      password: input.password,
+      role: pluginRole(input.roleKey),
+      data: { emailVerified: true, mustChangePassword: input.mustChangePassword },
+    },
+    headers: input.headers as RequestHeaders,
   });
-
-  if (input.roleIds.length) await setUserRoles(user.id, input.roleIds, input.createdBy ?? null);
-  return user;
+  await refreshStaffManagers();
+  return created.user;
 }
 
-export async function setPassword(userId: string, password: string, options: { mustChange?: boolean } = {}) {
-  await ensureDb();
-  const [account] = await db
-    .select()
-    .from(accounts)
-    .where(and(eq(accounts.userId, userId), eq(accounts.providerId, "credential")))
-    .limit(1);
-  const passwordHash = hashPassword(password);
-  if (account) {
-    await db.update(accounts).set({ password: passwordHash, updatedAt: new Date() }).where(eq(accounts.id, account.id));
-  } else {
-    await db.insert(accounts).values({
-      accountId: userId,
-      providerId: "credential",
-      userId,
-      password: passwordHash,
-    });
-  }
-  await db
-    .update(users)
-    .set({ mustChangePassword: options.mustChange ?? false, updatedAt: new Date() })
-    .where(eq(users.id, userId));
+export async function provisionAccount(input: {
+  name: string;
+  email: string;
+  password: string;
+  roleKey: string;
+  mustChangePassword: boolean;
+}) {
+  const context = await auth.$context;
+  const user = await context.internalAdapter.createUser(
+    {
+      name: input.name.trim(),
+      email: input.email.trim().toLowerCase(),
+      emailVerified: true,
+      role: input.roleKey,
+      mustChangePassword: input.mustChangePassword,
+    },
+    { method: "invitation" },
+  );
+  if (!user) throw new Error("The account could not be created.");
+  await context.internalAdapter.linkAccount({
+    providerId: "credential",
+    accountId: user.id,
+    password: await context.password.hash(input.password),
+    userId: user.id,
+  });
+  await refreshStaffManagers();
+  const [row] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+  return row;
 }
 
-/** Ends every session for a user; used on suspension and password reset. */
-export async function revokeAllSessions(userId: string, exceptSessionId?: string): Promise<number> {
-  await ensureDb();
-  const rows = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, userId));
-  const targets = rows.filter((row) => row.id !== exceptSessionId);
-  for (const row of targets) await db.delete(sessions).where(eq(sessions.id, row.id));
-  return targets.length;
+export async function assignRole(userId: string, roleKey: string, headers: RequestHeaders) {
+  await auth.api.setRole({ body: { userId, role: pluginRole(roleKey) }, headers });
+  await refreshStaffManagers();
 }
 
-export async function credentialAccount(userId: string) {
-  await ensureDb();
-  const [account] = await db
-    .select()
-    .from(accounts)
-    .where(and(eq(accounts.userId, userId), eq(accounts.providerId, "credential")))
-    .limit(1);
-  return account ?? null;
+export async function setAdminPassword(userId: string, newPassword: string, headers: RequestHeaders) {
+  await auth.api.setUserPassword({ body: { userId, newPassword }, headers });
 }
 
-export async function rolesOf(userId: string) {
-  await ensureDb();
-  return db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId));
+export async function banAccount(userId: string, banReason: string, headers: RequestHeaders) {
+  await auth.api.banUser({ body: { userId, banReason }, headers });
+  await refreshStaffManagers();
+}
+
+export async function unbanAccount(userId: string, headers: RequestHeaders) {
+  await auth.api.unbanUser({ body: { userId }, headers });
+  await refreshStaffManagers();
+}
+
+export async function revokeAllSessions(userId: string, headers: RequestHeaders) {
+  await auth.api.revokeUserSessions({ body: { userId }, headers });
+}
+
+export async function revokeSessionByToken(token: string, headers: RequestHeaders) {
+  await auth.api.revokeUserSession({ body: { sessionToken: token }, headers });
+}
+
+export async function removeAccount(userId: string, headers: RequestHeaders) {
+  await auth.api.removeUser({ body: { userId }, headers });
+  await refreshStaffManagers();
+}
+
+export async function impersonateAccount(userId: string, headers: RequestHeaders) {
+  return auth.api.impersonateUser({ body: { userId }, headers });
+}
+
+export async function listUserSessions(userId: string, headers: RequestHeaders) {
+  return auth.api.listUserSessions({ body: { userId }, headers });
+}
+
+export async function setMustChangePassword(userId: string, value: boolean) {
+  await db.update(users).set({ mustChangePassword: value, updatedAt: new Date() }).where(eq(users.id, userId));
+}
+
+export async function touchLastSignIn(userId: string) {
+  await db.update(users).set({ lastSignInAt: new Date(), updatedAt: new Date() }).where(eq(users.id, userId));
 }

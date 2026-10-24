@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { roles, userRoles, users } from "@/lib/db/schema";
+import { roles, sessions, users } from "@/lib/db/schema";
 import { PERMISSION_KEYS, SYSTEM_ROLES } from "@/lib/auth/permissions";
 import {
   countActiveStaffAtRank,
@@ -13,11 +13,11 @@ import {
   rolePermissionKeys,
   rolesForUser,
   setRolePermissions,
-  setUserRoles,
   syncRbacCatalog,
 } from "@/lib/auth/rbac";
 import { ADMIN_RANK, assertPermission, can, isAdminRank, requireStepUp } from "@/lib/auth/session";
-import { createAccount } from "@/lib/auth/mutations";
+import { assignRole, banAccount, provisionAccount, unbanAccount } from "@/lib/auth/mutations";
+import { signedInHeaders } from "./support/auth";
 import { adminActor, editorActor, viewerActor } from "./support/actor";
 
 describe("permission catalogue", () => {
@@ -85,38 +85,56 @@ describe("step-up", () => {
 });
 
 describe("role assignment", () => {
-  it("reports the roles a user holds, highest rank first", async () => {
+  it("reports the role a user holds", async () => {
     const viewer = await viewerActor();
     const held = await rolesForUser(viewer.user.id);
     expect(held.map((role) => role.key)).toEqual(["viewer"]);
   });
 
-  it("replaces assignments atomically and records who did it", async () => {
+  it("moves an account between roles through the admin plugin", async () => {
     await ensureDb();
-    const admin = await adminActor();
-    const [editorRole, viewerRole] = await Promise.all([getRoleByKey("editor"), getRoleByKey("viewer")]);
-    const account = await createAccount({
+    const headers = await signedInHeaders("admin@trofeo.example");
+    const account = await provisionAccount({
       name: "Role Swap",
       email: `role-swap-${Date.now()}@trofeo.example`,
       password: "TrofeoDemo2026!",
-      roleIds: [viewerRole!.id],
+      roleKey: "viewer",
       mustChangePassword: false,
     });
     expect((await rolesForUser(account.id)).map((role) => role.key)).toEqual(["viewer"]);
 
-    await setUserRoles(account.id, [editorRole!.id, viewerRole!.id], admin.user.id);
-    const held = await rolesForUser(account.id);
-    expect(held.map((role) => role.key).sort()).toEqual(["editor", "viewer"]);
-    expect((await permissionKeysForUser(account.id)).length).toBeGreaterThan(13);
+    await assignRole(account.id, "editor", headers);
+    expect((await rolesForUser(account.id)).map((role) => role.key)).toEqual(["editor"]);
+    const grants = await permissionKeysForUser(account.id);
+    expect(grants).toContain("page.edit");
+    expect(grants).not.toContain("settings.manage");
 
-    // The role that already existed keeps its original grant record; the newly
-    // added one records who assigned it.
-    const [row] = await db
-      .select()
-      .from(userRoles)
-      .where(and(eq(userRoles.userId, account.id), eq(userRoles.roleId, editorRole!.id)))
-      .limit(1);
-    expect(row.assignedBy).toBe(admin.user.id);
+    await db.delete(users).where(eq(users.id, account.id));
+  });
+
+  it("bans an account and ends its sessions, then lifts the ban", async () => {
+    await ensureDb();
+    const headers = await signedInHeaders("admin@trofeo.example");
+    const account = await provisionAccount({
+      name: "Ban Target",
+      email: `ban-target-${Date.now()}@trofeo.example`,
+      password: "TrofeoDemo2026!",
+      roleKey: "viewer",
+      mustChangePassword: false,
+    });
+    await signedInHeaders(account.email, "TrofeoDemo2026!");
+
+    await banAccount(account.id, "Left the company", headers);
+    const [banned] = await db.select().from(users).where(eq(users.id, account.id)).limit(1);
+    expect(banned.banned).toBe(true);
+    expect(banned.banReason).toBe("Left the company");
+    const live = await db.select().from(sessions).where(eq(sessions.userId, account.id));
+    expect(live).toHaveLength(0);
+    await expect(signedInHeaders(account.email, "TrofeoDemo2026!")).rejects.toThrow();
+
+    await unbanAccount(account.id, headers);
+    const [restored] = await db.select().from(users).where(eq(users.id, account.id)).limit(1);
+    expect(restored.banned).toBe(false);
 
     await db.delete(users).where(eq(users.id, account.id));
   });

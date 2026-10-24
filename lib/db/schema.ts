@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -27,7 +28,6 @@ import type {
  * asks for one (section 3.5).
  * ------------------------------------------------------------------ */
 
-export const userStatus = pgEnum("user_status", ["active", "disabled"]);
 export const siteStatus = pgEnum("site_status", ["active", "suspended", "deleted"]);
 export const domainKind = pgEnum("domain_kind", ["platform_subdomain", "custom"]);
 export const domainStatus = pgEnum("domain_status", [
@@ -131,6 +131,9 @@ export const auditAction = pgEnum("audit_action", [
   "session_revoked",
   "two_factor_enabled",
   "two_factor_disabled",
+  "account_removed",
+  "passkey_added",
+  "passkey_removed",
 ]);
 
 /* ------------------------------------------------------------------ *
@@ -147,8 +150,11 @@ export const users = pgTable(
     email: text("email").notNull(),
     emailVerified: boolean("email_verified").notNull().default(false),
     image: text("image"),
-    /** App-level suspension. Sign-in and every session are refused while disabled. */
-    status: userStatus("status").notNull().default("active"),
+    /** The Better Auth admin plugin's role column: one role key per staff member. */
+    role: text("role").notNull().default("viewer"),
+    banned: boolean("banned").notNull().default(false),
+    banReason: text("ban_reason"),
+    banExpires: timestamp("ban_expires", { withTimezone: true }),
     /** Set when an admin creates an account or resets a password. */
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
@@ -156,7 +162,7 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("user_email_idx").on(t.email), index("user_status_idx").on(t.status)],
+  (t) => [uniqueIndex("user_email_idx").on(t.email), index("user_role_idx").on(t.role)],
 );
 
 /** Better Auth credential and (later) social accounts. The only writer is Better Auth. */
@@ -198,6 +204,8 @@ export const sessions = pgTable(
     userAgent: text("user_agent"),
     /** Fresh-proof window for sensitive acts, owned by this app. */
     stepUpUntil: timestamp("step_up_until", { withTimezone: true }),
+    /** Set by the admin plugin while one staff member views the app as another. */
+    impersonatedBy: text("impersonated_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -234,6 +242,55 @@ export const twoFactors = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("two_factor_user_idx").on(t.userId)],
+);
+
+/** WebAuthn credentials owned by the passkey plugin. */
+export const passkeys = pgTable(
+  "passkey",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull(),
+    counter: integer("counter").notNull().default(0),
+    deviceType: text("device_type").notNull(),
+    backedUp: boolean("backed_up").notNull().default(false),
+    transports: text("transports"),
+    aaguid: text("aaguid"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("passkey_user_idx").on(t.userId), uniqueIndex("passkey_credential_idx").on(t.credentialID)],
+);
+
+/** Storage for Better Auth's built-in rate limiter. */
+export const rateLimits = pgTable("rate_limit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  key: text("key").notNull(),
+  count: integer("count").notNull().default(0),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull().default(0),
+});
+
+/**
+ * A password-reset link Better Auth minted, kept so an admin can hand it over:
+ * this deployment has no mail transport, so the link is shown once on the team
+ * screen instead of being emailed.
+ */
+export const staffResetLinks = pgTable(
+  "staff_reset_link",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("staff_reset_link_user_idx").on(t.userId, t.createdAt)],
 );
 
 /**
@@ -290,21 +347,6 @@ export const rolePermissions = pgTable(
     grantedBy: uuid("granted_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => [primaryKey({ columns: [t.roleId, t.permissionId] })],
-);
-
-export const userRoles = pgTable(
-  "user_role",
-  {
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    roleId: uuid("role_id")
-      .notNull()
-      .references(() => roles.id, { onDelete: "cascade" }),
-    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
-    assignedBy: uuid("assigned_by").references(() => users.id, { onDelete: "set null" }),
-  },
-  (t) => [primaryKey({ columns: [t.userId, t.roleId] }), index("user_role_role_idx").on(t.roleId)],
 );
 
 /**
@@ -670,4 +712,6 @@ export type Role = typeof roles.$inferSelect;
 export type Permission = typeof permissions.$inferSelect;
 export type SessionRecord = typeof sessions.$inferSelect;
 export type Account = typeof accounts.$inferSelect;
+export type Passkey = typeof passkeys.$inferSelect;
+export type StaffResetLink = typeof staffResetLinks.$inferSelect;
 export type Job = typeof jobs.$inferSelect;

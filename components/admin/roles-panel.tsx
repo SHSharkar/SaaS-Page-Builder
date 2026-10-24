@@ -396,10 +396,11 @@ function CreateRoleForm({
   permissions: PermissionRow[];
   pending: boolean;
   onCancel: () => void;
-  onCreate: (input: { name: string; description: string; permissionKeys: string[] }) => void;
+  onCreate: (input: { name: string; description: string; rank: number; permissionKeys: string[] }) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [rank, setRank] = useState(0);
   const [templateOf, setTemplateOf] = useState("editor");
 
   return (
@@ -430,6 +431,23 @@ function CreateRoleForm({
             placeholder="What this role is for"
           />
         </div>
+      </div>
+      <div className="mt-3 max-w-[220px]">
+        <label className="label" htmlFor="new-role-rank">
+          Rank
+        </label>
+        <input
+          id="new-role-rank"
+          type="number"
+          min={0}
+          max={99}
+          className="input"
+          value={rank}
+          onChange={(event) => setRank(Number(event.target.value))}
+        />
+        <p className="mt-1 text-[11px] text-slate-400">
+          Nobody can manage a role ranked at or above their own. Administrator is 100.
+        </p>
       </div>
       <div className="mt-3">
         <span className="label">Start from</span>
@@ -465,6 +483,7 @@ function CreateRoleForm({
             onCreate({
               name,
               description,
+              rank: Number.isFinite(rank) ? Math.max(0, Math.min(99, rank)) : 0,
               permissionKeys:
                 templateOf === "none"
                   ? []

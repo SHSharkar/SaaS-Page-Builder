@@ -1,21 +1,20 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { hash, verify } from "@node-rs/argon2";
 
-const KEYLEN = 64;
+const MEMORY_COST = 19456;
+const TIME_COST = 2;
 
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const derived = scryptSync(password, salt, KEYLEN).toString("hex");
-  return `scrypt$${salt}$${derived}`;
+export async function hashPassword(password: string): Promise<string> {
+  return hash(password, { memoryCost: MEMORY_COST, timeCost: TIME_COST, parallelism: 1 });
 }
 
-export function verifyPassword(password: string, stored: string | null): boolean {
+export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
   if (!stored) return false;
-  const [scheme, salt, digest] = stored.split("$");
-  if (scheme !== "scrypt" || !salt || !digest) return false;
-  const candidate = scryptSync(password, salt, KEYLEN);
-  const expected = Buffer.from(digest, "hex");
-  if (candidate.length !== expected.length) return false;
-  return timingSafeEqual(candidate, expected);
+  try {
+    return await verify(stored, password);
+  } catch {
+    return false;
+  }
 }
 
 export function hashToken(token: string): string {

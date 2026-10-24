@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { domains, userRoles, users } from "@/lib/db/schema";
+import { domains, users } from "@/lib/db/schema";
 import { requireActor, requirePermission, requireStepUp } from "@/lib/auth/session";
 import { listRoles } from "@/lib/auth/rbac";
 import {
@@ -261,17 +261,13 @@ export async function listDeletedSitesForAdmin() {
 export async function listAssignableStaff() {
   await ensureDb();
   const rows = await db
-    .select({ id: users.id, name: users.name, email: users.email, status: users.status })
+    .select({ id: users.id, name: users.name, email: users.email, banned: users.banned, roleKey: users.role })
     .from(users)
     .orderBy(users.name);
   const roles = await listRoles();
-  const assignments = await db
-    .select({ userId: userRoles.userId, roleId: userRoles.roleId })
-    .from(userRoles);
   return rows.map((row) => ({
     ...row,
-    roles: roles
-      .filter((role) => assignments.some((entry) => entry.userId === row.id && entry.roleId === role.id))
-      .map((role) => role.name),
+    status: row.banned ? "banned" : "active",
+    roles: roles.filter((role) => role.key === row.roleKey).map((role) => role.name),
   }));
 }

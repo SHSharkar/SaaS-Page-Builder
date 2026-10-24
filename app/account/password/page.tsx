@@ -1,8 +1,10 @@
 import { AuthShell } from "@/components/auth/auth-shell";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { SessionList } from "@/components/auth/session-list";
+import { PasskeyManager } from "@/components/auth/passkey-manager";
 import { requireActor, roleLabels } from "@/lib/auth/session";
 import { listSessions } from "@/lib/auth/rbac";
+import { listOwnPasskeys } from "@/lib/actions/account";
 
 export const metadata = { title: "Your account" };
 export const dynamic = "force-dynamic";
@@ -10,7 +12,10 @@ export const dynamic = "force-dynamic";
 export default async function AccountPasswordPage() {
   const actor = await requireActor();
   const forced = actor.user.mustChangePassword;
-  const sessions = await listSessions({ userId: actor.user.id });
+  const [sessions, passkeys] = await Promise.all([
+    listSessions({ userId: actor.user.id }),
+    listOwnPasskeys(),
+  ]);
 
   return (
     <AuthShell
@@ -29,6 +34,10 @@ export default async function AccountPasswordPage() {
     >
       <div className="space-y-6">
         <ChangePasswordForm forced={forced} />
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Passkeys</p>
+          <PasskeyManager passkeys={passkeys} />
+        </div>
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Where you are signed in</p>
           <SessionList

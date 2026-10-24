@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireActor, primaryRole, can } from "@/lib/auth/session";
 import { listSites } from "@/lib/sites";
 import { signOutAction } from "@/lib/actions/auth";
+import { stopImpersonatingAction } from "@/lib/actions/team";
 import { MobileNav, SidebarNav, type NavItem } from "@/components/admin/nav";
 
 export const dynamic = "force-dynamic";
@@ -110,7 +111,22 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
 
         <main className="px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-          <div className="mx-auto max-w-[1200px]">{children}</div>
+          <div className="mx-auto max-w-[1200px]">
+            {actor.session.impersonatedBy ? (
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold-300 bg-[#fbf6e8] px-4 py-3">
+                <p className="text-[12px] text-ink-900">
+                  You are signed in as <strong>{actor.user.name}</strong> through an administrator impersonation
+                  session. Actions are recorded against your own account.
+                </p>
+                <form action={stopImpersonatingAction}>
+                  <button type="submit" className="btn-admin btn-admin-primary !px-3 !py-1.5 !text-[11px]">
+                    Return to my account
+                  </button>
+                </form>
+              </div>
+            ) : null}
+            {children}
+          </div>
         </main>
       </div>
     </div>

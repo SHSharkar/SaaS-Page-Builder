@@ -36,17 +36,23 @@ export default async function TeamPage() {
             id: member.id,
             name: member.name,
             email: member.email,
-            status: member.status,
+            roleKey: member.roleKey,
+            role: member.role
+              ? {
+                  id: member.role.id,
+                  name: member.role.name,
+                  isSystem: member.role.isSystem,
+                  rank: member.role.rank,
+                }
+              : null,
+            banned: member.banned,
+            banReason: member.banReason,
+            banExpires: member.banExpires ? member.banExpires.toISOString() : null,
             mustChangePassword: member.mustChangePassword,
             twoFactorEnabled: member.twoFactorEnabled,
             lastSignInAt: member.lastSignInAt ? member.lastSignInAt.toISOString() : null,
             sessionCount: member.sessionCount,
-            roles: member.roles.map((role) => ({
-              id: role.id,
-              name: role.name,
-              isSystem: role.isSystem,
-              rank: role.rank,
-            })),
+            passkeyCount: member.passkeyCount,
           }))}
           invites={invites.map((invite) => ({
             id: invite.id,

@@ -28,7 +28,7 @@ export async function platformOverview(): Promise<Overview> {
       (select count(*)::int from domain where removed_at is null) as domains,
       (select count(*)::int from domain where removed_at is null and status in ('pending','verifying')) as "pendingDomains",
       (select count(*)::int from import_job where status in ('in_review','mapped')) as "importsInReview",
-      (select count(*)::int from "user" where status = 'active') as staff,
+      (select count(*)::int from "user" where banned = false) as staff,
       (select count(*)::int from staff_invite where status = 'pending') as "pendingInvites"
   `);
   return (

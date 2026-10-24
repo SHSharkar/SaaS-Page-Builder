@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requirePermission, requireStepUp } from "@/lib/auth/session";
+import { assertRoleCeiling, requirePermission, requireStepUp } from "@/lib/auth/session";
 import { createRole, deleteRole, getRole, setRolePermissions, updateRole } from "@/lib/auth/rbac";
 import { recordAudit } from "@/lib/audit";
 
@@ -19,14 +19,17 @@ function failure(error: unknown): RoleActionState {
 export async function createRoleAction(input: {
   name: string;
   description: string;
+  rank: number;
   permissionKeys: string[];
 }): Promise<RoleActionState> {
   try {
     const actor = await requirePermission("role.manage");
     await requireStepUp(actor);
+    assertRoleCeiling(actor, input.rank, "create a role at or above your own rank");
     const role = await createRole({
       name: input.name,
       description: input.description,
+      rank: input.rank,
       permissionKeys: input.permissionKeys,
       actorId: actor.user.id,
     });
@@ -36,7 +39,7 @@ export async function createRoleAction(input: {
       actor,
       targetType: "role",
       targetId: role.id,
-      detail: { key: role.key, permissionKeys: input.permissionKeys },
+      detail: { key: role.key, rank: role.rank, permissionKeys: input.permissionKeys },
     });
     revalidatePath("/admin/roles");
     return { ok: true, message: `The ${role.name} role is ready to assign.`, roleId: role.id };
@@ -57,28 +60,29 @@ export async function updateRoleAction(input: {
     await requireStepUp(actor);
     const role = await getRole(input.roleId);
     if (!role) throw new Error("Role not found.");
-    // A system role keeps its name and rank (the definition owns those) but its
-    // description and, except for Administrator, its permissions are editable.
+    assertRoleCeiling(actor, role.rank, "edit");
+    if (!role.isSystem) assertRoleCeiling(actor, input.rank, "raise a role to");
+
     const updated = await updateRole(input.roleId, {
       name: role.isSystem ? role.name : input.name,
       description: input.description,
       rank: role.isSystem ? role.rank : input.rank,
     });
-    const keys =
-      role.isSystem && role.key === "admin" ? input.permissionKeys : input.permissionKeys;
-    if (!(role.isSystem && role.key === "admin")) {
-      await setRolePermissions(input.roleId, keys, actor.user.id);
-    }
+
+    const adminRole = role.isSystem && role.key === "admin";
+    if (!adminRole) await setRolePermissions(input.roleId, input.permissionKeys, actor.user.id);
+
     await recordAudit({
       action: "role_updated",
-      summary: `Updated the ${updated.name} role (${keys.length} permission(s))`,
+      summary: adminRole
+        ? `Updated the description of the ${updated.name} role`
+        : `Updated the ${updated.name} role (${input.permissionKeys.length} permission(s))`,
       actor,
       targetType: "role",
       targetId: input.roleId,
-      detail: { permissionKeys: keys },
+      detail: adminRole ? undefined : { rank: updated.rank, permissionKeys: input.permissionKeys },
     });
     revalidatePath("/admin/roles");
-    revalidatePath(`/admin/roles/${input.roleId}`);
     return { ok: true, message: "Role saved.", roleId: input.roleId };
   } catch (error) {
     return failure(error);
@@ -91,6 +95,7 @@ export async function deleteRoleAction(input: { roleId: string }): Promise<RoleA
     await requireStepUp(actor);
     const role = await getRole(input.roleId);
     if (!role) throw new Error("Role not found.");
+    assertRoleCeiling(actor, role.rank, "delete");
     await deleteRole(input.roleId, actor.user.id);
     await recordAudit({
       action: "role_deleted",

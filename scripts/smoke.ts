@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, gte } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { accounts, pages, roles, userRoles, users } from "@/lib/db/schema";
+import { accounts, pages, roles, users } from "@/lib/db/schema";
 import {
   archivePage,
   createPage,
@@ -63,9 +63,8 @@ async function main() {
   const [user] = await db
     .select({ user: users })
     .from(users)
-    .innerJoin(userRoles, eq(userRoles.userId, users.id))
-    .innerJoin(roles, eq(roles.id, userRoles.roleId))
-    .where(and(eq(users.status, "active"), gte(roles.rank, 100)))
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(and(eq(users.banned, false), gte(roles.rank, 100)))
     .limit(1)
     .then((rows) => rows.map((row) => row.user));
   if (!user) throw new Error("No active admin to run the smoke test as.");
@@ -79,6 +78,7 @@ async function main() {
       ipAddress: null,
       userAgent: "smoke",
       stepUpUntil: new Date(Date.now() + 3_600_000),
+      impersonatedBy: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -93,8 +93,7 @@ async function main() {
   const [editor] = await db
     .select({ user: users })
     .from(users)
-    .innerJoin(userRoles, eq(userRoles.userId, users.id))
-    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .innerJoin(roles, eq(roles.key, users.role))
     .where(eq(roles.key, "editor"))
     .limit(1)
     .then((rows) => rows.map((row) => row.user));

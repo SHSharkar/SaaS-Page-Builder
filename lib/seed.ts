@@ -9,6 +9,7 @@ import {
   staffInvites,
   templates,
   users,
+  type User,
 } from "@/lib/db/schema";
 import {
   DOCUMENT_SCHEMA_VERSION,
@@ -20,7 +21,7 @@ import {
 import { DEFAULT_APPEARANCE } from "@/lib/registry/types";
 import { defaultPropsFor } from "@/lib/registry";
 import { hashToken, newToken } from "@/lib/auth/password";
-import { createAccount } from "@/lib/auth/mutations";
+import { provisionAccount } from "@/lib/auth/mutations";
 import { listRoles, permissionKeysForUser, syncRbacCatalog } from "@/lib/auth/rbac";
 import { createSite } from "@/lib/sites";
 import { createPage, publishPage } from "@/lib/pages";
@@ -55,7 +56,7 @@ function doc(content: BlockNode[]): PageDocument {
 }
 
 /** A stand-in actor for the seed's own writes; it carries the admin grants. */
-async function seedActor(user: Awaited<ReturnType<typeof createAccount>>): Promise<Actor> {
+async function seedActor(user: User): Promise<Actor> {
   const roles = await listRoles();
   const adminRole = roles.find((role) => role.key === "admin");
   const permissions = await permissionKeysForUser(user.id);
@@ -69,6 +70,7 @@ async function seedActor(user: Awaited<ReturnType<typeof createAccount>>): Promi
       ipAddress: null,
       userAgent: "seed",
       stepUpUntil: new Date(Date.now() + 60_000),
+      impersonatedBy: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -94,25 +96,25 @@ export async function seedIfEmpty(): Promise<void> {
     return role.id;
   };
 
-  const admin = await createAccount({
+  const admin = await provisionAccount({
     name: "Dana Whitlock",
     email: "admin@trofeo.example",
     password: DEMO_PASSWORD_VALUE,
-    roleIds: [roleId("admin")],
+    roleKey: "admin",
     mustChangePassword: false,
   });
-  const editor = await createAccount({
+  const editor = await provisionAccount({
     name: "Marco Silva",
     email: "editor@trofeo.example",
     password: DEMO_PASSWORD_VALUE,
-    roleIds: [roleId("editor")],
+    roleKey: "editor",
     mustChangePassword: false,
   });
-  await createAccount({
+  await provisionAccount({
     name: "Priya Raman",
     email: "viewer@trofeo.example",
     password: DEMO_PASSWORD_VALUE,
-    roleIds: [roleId("viewer")],
+    roleKey: "viewer",
     mustChangePassword: false,
   });
 

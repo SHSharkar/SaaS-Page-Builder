@@ -111,27 +111,43 @@ drop it.
 from any page. Tokens written as `{{token}}` become fill-in fields at creation time; applying a
 template copies the document, so later edits never change the template.
 
-**Identity.** Authentication is [Better Auth](https://better-auth.com) 1.7 behind
+**Identity.** Authentication is [Better Auth](https://better-auth.com) 1.7.12 behind
 `/api/auth/[...all]`: it owns `user`, `account` (the password is a credential row), `session`,
-`verification` and `two_factor`. The password hasher is our scrypt pair, so an existing database keeps
-its users through the migration. Public sign-up is disabled (`disableSignUp`), so accounts exist only
-because an admin created one or an invitation was accepted.
+`verification`, `two_factor` and `passkey`. Passwords are hashed with Argon2id (`@node-rs/argon2`,
+19 MiB / 2 passes) through the `emailAndPassword.password` hooks, so the library and the app agree on
+one hasher. Public sign-up is disabled (`disableSignUp`), so accounts exist only because an admin
+created one or an invitation was accepted. Sign-in is rate limited through Better Auth's own database
+store, so the limit survives a restart and would survive a second instance.
 
-**Authorization.** Roles are rows, permissions are rows, and the join tables are the only source of
-truth — nothing compares a role *name* to a string. `lib/auth/permissions.ts` defines the 40-key
-catalogue (what a capability *means*, grouped and flagged when dangerous);
-`lib/auth/rbac.ts` owns the tables, `syncRbacCatalog()` keeps the catalogue in lockstep on boot, and
-every server action calls `requirePermission(key)`, which is deny-by-default and treats an unknown key
-as a programmer error. `/admin/roles` is a live matrix editor: create a role, tick capabilities,
-assign it on `/admin/team`, and the next request respects it (permissions are re-read per request, not
-cached in the cookie). The Administrator role always holds the whole catalogue; Editor and Viewer are
-seeded once and can then be narrowed without the next boot undoing it.
+**Staff management is the admin plugin.** `better-auth/plugins/admin` supplies the `user.role`,
+`banned`, `banReason`, `banExpires` columns, `session.impersonatedBy`, and the endpoints the team
+screen calls: `createUser`, `setRole`, `banUser` / `unbanUser`, `setUserPassword`,
+`revokeUserSessions`, `impersonateUser` / `stopImpersonating` and `removeUser`. The plugin checks
+"does this caller hold the admin role", which is not a rank ceiling, so every app call wraps it in
+`assertRoleCeiling`: nobody can create, edit, ban or impersonate an account whose role ranks at or
+above their own, and the last active Administrator can never be demoted, banned or deleted.
 
-Sensitive acts (role changes, suspensions, domains, deletions) require *step-up*: `requireStepUp`
-answers 428 until the session refreshes its confirmation, which `/account` and the team screen do
-inline with the current password for a ten-minute window. Sessions are listed on `/account` and
-revocable per device; suspending an account ends its sessions immediately. `server.ts` also enforces
-`stepUpUntil` from the database, so a stale cookie cannot claim freshness.
+**Passkeys.** `@better-auth/passkey` adds the `passkey` table and the WebAuthn ceremonies. Staff
+register a passkey on `/account` and sign in with it from `/sign-in`; the credential never leaves the
+authenticator. Two-factor (TOTP) still applies on top.
+
+**Authorization.** One role per person: `user.role` stores the role *key*, and `role`,
+`permission` and `role_permission` are the catalogue the app owns. Nothing compares a role *name* to
+a string. `lib/auth/permissions.ts` defines the 40-key catalogue (what a capability *means*, grouped
+and flagged when dangerous); `lib/auth/rbac.ts` owns the tables, `syncRbacCatalog()` keeps the
+catalogue in lockstep on boot, and every server action calls `requirePermission(key)`, which is
+deny-by-default and treats an unknown key as a programmer error. `/admin/roles` is a live matrix
+editor: create a role with a rank, tick capabilities, pick it on `/admin/team`, and the next request
+respects it (permissions are re-read per request, not cached in the cookie). The Administrator role
+always holds the whole catalogue; Editor and Viewer are seeded once and can then be narrowed without
+the next boot undoing it.
+
+Sensitive acts (role changes, bans, deletions, domains, role edits) require *step-up*:
+`requireStepUp` answers 428 until the session refreshes its confirmation, which the team, roles and
+account screens do inline with the current password for a ten-minute window. Sessions are listed on
+`/account` and revocable per device; banning an account ends its sessions immediately and the ban
+check runs on every request *and* on every new session. `server.ts` reads `stepUpUntil` from the
+database, so a stale cookie cannot claim freshness.
 
 **Operations.** Invite-only staff accounts, single-use invitations with a role attached (seven-day
 expiry, enforced on read as well as by the sweeper), admin-created accounts that must change their
@@ -255,8 +271,8 @@ components/
   admin/                          screens and client widgets
 drizzle/                          SQL migrations
 scripts/                          migrate, seed, smoke
-tests/                            vitest suites (lifecycle, pages, media, retention,
-                                  rendering, catalog)
+tests/                            vitest suites (auth and RBAC, lifecycle, pages, media,
+                                  retention, rendering, catalog)
 ```
 
 ## Decisions worth knowing
@@ -288,9 +304,9 @@ tests/                            vitest suites (lifecycle, pages, media, retent
 - **Invitations are shown once** as a copyable link; there is no mail transport in this build. The
   accept screen, expiry and single-use rules are real. Password resets work the same way: the admin
   gets a one-hour, single-use link to hand over.
-- **Better Auth owns identity, the app owns authorization.** Keeping roles out of the auth library
-  means a role can be reshaped at run time without a deploy, and an identity provider could be added
-  later without touching a single guard.
+- **Better Auth owns identity, the app owns the authorization catalogue.** The admin plugin stores
+  which role key a person holds; the permissions that key grants live in the app's own tables, so a
+  role can be reshaped at run time without a deploy and no guard ever reads a role string.
 - **Permissions are re-read on every request** (`getActor` → `rolesForUser` + `permissionKeysForUser`)
   and the session cookie carries no authorization claim, so revoking a role takes effect on the next
   click instead of the next sign-in.

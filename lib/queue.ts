@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { jobs, roles, sessions, staffInvites, pages, siteContents, userRoles, users } from "@/lib/db/schema";
+import { jobs, roles, sessions, staffInvites, pages, siteContents, users } from "@/lib/db/schema";
 import type { Actor } from "@/lib/auth/session";
 import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
 import { publishPage, unpublishPage, pruneVersions } from "@/lib/pages";
@@ -48,9 +48,8 @@ export async function getSystemActor(): Promise<Actor | null> {
   const [row] = await db
     .select({ user: users })
     .from(users)
-    .innerJoin(userRoles, eq(userRoles.userId, users.id))
-    .innerJoin(roles, eq(roles.id, userRoles.roleId))
-    .where(and(eq(users.status, "active"), gte(roles.rank, 100)))
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(and(eq(users.banned, false), gte(roles.rank, 100)))
     .orderBy(desc(roles.rank))
     .limit(1);
   if (!row) return null;
@@ -66,6 +65,7 @@ export async function getSystemActor(): Promise<Actor | null> {
         ipAddress: null,
         userAgent: "queue",
         stepUpUntil: new Date(Date.now() + 60_000),
+        impersonatedBy: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },

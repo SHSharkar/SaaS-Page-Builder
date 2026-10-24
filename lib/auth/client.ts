@@ -2,9 +2,9 @@
 
 import { createAuthClient } from "better-auth/react";
 import { twoFactorClient } from "better-auth/client/plugins";
+import { passkeyClient } from "@better-auth/passkey/client";
 
-/** The browser SDK. It talks to `/api/auth/*` and never holds a password. */
 export const authClient = createAuthClient({
   basePath: "/api/auth",
-  plugins: [twoFactorClient()],
+  plugins: [twoFactorClient(), passkeyClient()],
 });
