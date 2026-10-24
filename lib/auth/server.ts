@@ -34,7 +34,6 @@ export const auth = betterAuth({
     process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "[::1]:3000",
     // The sandbox preview proxies the dev server through its own host, so the
     // browser origin is neither localhost nor the base URL.
     "https://*.e2b.app",
