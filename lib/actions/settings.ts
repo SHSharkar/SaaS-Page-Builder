@@ -57,6 +57,28 @@ export async function runWorkerTickAction(): Promise<ActionState> {
   }
 }
 
+export async function runCleanupAction(): Promise<ActionState> {
+  try {
+    const actor = await requireRole("admin");
+    const { runDailyCleanup } = await import("@/lib/retention");
+    const result = await runDailyCleanup(actor);
+    cacheClear();
+    revalidatePath("/admin/settings");
+    const parts = [
+      `${result.sessionsRemoved} sessions`,
+      `${result.invitesExpired} invites`,
+      `${result.versionsPruned} snapshots`,
+      `${result.importJobsRemoved + result.importFilesRemoved + result.pendingMediaRemoved} files`,
+      `${result.auditRowsRemoved} audit rows`,
+      `${result.sitesPurged} sites`,
+      `${result.domainsForgotten} hostnames`,
+    ];
+    return { ok: true, message: `Sweeper ran: ${parts.join(" · ")}.` };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
 export async function clearCacheAction(): Promise<ActionState> {
   try {
     await requireRole("admin");

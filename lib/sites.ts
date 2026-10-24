@@ -2,7 +2,8 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { domains, pages, sites, siteContents, type Domain, type Site } from "@/lib/db/schema";
 import { DEFAULT_THEME, normalizeHostname, slugify, type SiteTheme } from "@/lib/documents";
-import { cacheGet, cacheKeys, cacheSet } from "@/lib/cache";
+import { cacheGet, cacheKeys, cacheClear, cacheSet } from "@/lib/cache";
+import { assertTransition, KEEP, daysFromNow } from "@/lib/lifecycle";
 
 export const PLATFORM_DOMAIN = process.env.PLATFORM_DOMAIN ?? "pages.trofeo.test";
 
@@ -194,10 +195,58 @@ export async function renameSite(siteId: string, name: string): Promise<void> {
 
 export async function setSiteStatus(siteId: string, status: "active" | "suspended" | "deleted"): Promise<void> {
   await ensureDb();
+  const site = await getSiteRow(siteId);
+  if (!site) throw new Error("Site not found.");
+  assertTransition("site", site.status, status);
   await db
     .update(sites)
     .set({ status, deletedAt: status === "deleted" ? new Date() : null, updatedAt: new Date() })
     .where(eq(sites.id, siteId));
+}
+
+/** Includes soft-deleted rows: the restore path needs to see them. */
+export async function getSiteRow(siteId: string): Promise<Site | null> {
+  await ensureDb();
+  const [row] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
+  return row ?? null;
+}
+
+/** Soft-deleted sites inside their restore window. */
+export async function listDeletedSites() {
+  await ensureDb();
+  const rows = await db.select().from(sites).where(eq(sites.status, "deleted"));
+  return rows.map((site) => ({
+    site,
+    restorableUntil: site.deletedAt ? daysFromNow(KEEP.siteRestoreDays, site.deletedAt.getTime()) : null,
+  }));
+}
+
+export async function restoreSite(siteId: string): Promise<Site> {
+  await ensureDb();
+  const site = await getSiteRow(siteId);
+  if (!site) throw new Error("Site not found.");
+  if (site.status !== "deleted") throw new Error("That site is not deleted, so there is nothing to restore.");
+  const [restored] = await db
+    .update(sites)
+    .set({ status: "active", deletedAt: null, updatedAt: new Date() })
+    .where(eq(sites.id, siteId))
+    .returning();
+  cacheClear();
+  return restored;
+}
+
+/** The hard delete: rows cascade, hostnames are released with the site. */
+export async function purgeSite(siteId: string): Promise<void> {
+  await ensureDb();
+  const site = await getSiteRow(siteId);
+  if (!site) throw new Error("Site not found.");
+  // A hard delete is only ever the second stage: a live site must be deleted first,
+  // so nobody can destroy a running site with a single mis-click.
+  if (site.status !== "deleted") {
+    throw new Error("Delete the site before purging it. Only a deleted site can be purged.");
+  }
+  await db.delete(sites).where(eq(sites.id, siteId));
+  cacheClear();
 }
 
 export async function siteCounts(siteId: string) {

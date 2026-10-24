@@ -23,6 +23,7 @@ migrated and seeded automatically on first boot:
 - `npm run db:migrate` — apply the shipped migrations, then seed a fresh database
 - `npm run seed` — seed demo content (idempotent; existing data is never overwritten)
 - `npm run typecheck` — `tsc --noEmit`
+- `npm test` — the vitest suite (state machines, publishing, media, retention, rendering, catalog)
 - `npx tsx scripts/smoke.ts` — exercise the data layer end to end against a throwaway database
 
 Environment variables (all optional in development):
@@ -30,9 +31,19 @@ Environment variables (all optional in development):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PGLITE_DIR` | `./data/pg` | Database directory. Point at a real Postgres by swapping the driver in `lib/db`. |
-| `MEDIA_DIR` | `./data/media` | Where uploaded bytes live. Production uses Cloudflare R2 with the same identifiers. |
+| `MEDIA_DIR` | `./data/media` | Where uploaded bytes live when R2 is not configured. |
+| `R2_ACCOUNT_ID` | — | Cloudflare account id. Setting the five R2 variables switches media storage to the bucket. |
+| `R2_ACCESS_KEY_ID` | — | R2 token key id. |
+| `R2_SECRET_ACCESS_KEY` | — | R2 token secret. |
+| `R2_BUCKET` | — | Bucket name for site media. |
+| `R2_PUBLIC_BASE_URL` | — | Public bucket domain used to build asset URLs. |
 | `PLATFORM_DOMAIN` | `pages.trofeo.test` | Suffix for generated platform subdomains. |
 | `ALLOW_HOST_FALLBACK` | `true` | Serve the first active site when a host is unknown (preview environments). Set `false` in production so an unknown host 404s. |
+
+Media storage is one contract (`lib/media/storage.ts`) with two backends. With the `R2_*` variables
+present, uploads go straight from the browser to the bucket through a presigned PUT; without them the
+same flow writes to `MEDIA_DIR` through our own route. Either way the server re-reads the bytes and
+verifies type and checksum before the asset becomes usable.
 
 ## Demo accounts
 
@@ -67,10 +78,14 @@ index as well as in code.
 **Site globals.** Navigation, footer and default search tags are edited once per site, with their
 own drafts and their own publish step.
 
-**Media.** Uploads are byte-verified (magic bytes, not the file name), capped at 5 MB, stored under a
-content hash and deduplicated per site. Documents store media *identifiers*, never URLs, so the
-reference check before deletion is exact: a draft, a snapshot, a global or a staff template that
-still names the asset blocks the delete.
+**Media.** Uploads are two-staged: `POST /api/sites/{id}/media/presign` creates a `pending` row and a
+presigned PUT (or a null URL on the local backend), the bytes move, and
+`POST /api/sites/{id}/media/{mediaId}/confirm` re-reads what landed, checks the magic bytes against
+the declared type, verifies the SHA-256 the browser sends, deduplicates by content hash, renames the
+object to that hash and only then flips the row to `ready`. Unconfirmed uploads are swept after 24
+hours. Files are capped at 5 MB and 60 uploads per staff member per hour. Documents store media
+*identifiers*, never URLs, so the reference check before deletion is exact: a draft, a snapshot, a
+global or a staff template that still names the asset blocks the delete.
 
 **Hostnames.** `domain` rows drive serving. A hostname is `pending` until its TXT record verifies,
 then `active`; removing it stops serving immediately and clears the cache. Platform subdomains are
@@ -97,6 +112,40 @@ optional TOTP two-factor, single-use invitations, a step-up check for sensitive 
 audit log, a database-backed job queue with dedupe keys and exponential backoff, scheduled publish
 and unpublish, and a platform settings screen (database > environment > default).
 
+**Lifecycles and retention.** Every status change goes through the state machines in
+`lib/lifecycle.ts` (`assertTransition`); an illegal move is a typed 409, not a silent write. The
+machines are:
+
+| Object | States |
+| --- | --- |
+| Page | `draft` ↔ `published` → `archived` → `draft` (a restored page comes back as a draft) |
+| Site | `active` ↔ `suspended` → `deleted` → `active` (restore) |
+| Domain | `pending` → `verifying` → `active` \| `failed` → `pending` \| `removed` |
+| Import | `uploaded` → `parsing` → `mapped` → `in_review` → `applied` \| `discarded` \| `failed` |
+| Media | `pending` → `ready` → `deleted` |
+| Invite | `pending` → `accepted` \| `revoked` \| `expired` |
+
+Deleting a site is two-staged. The site stops serving immediately, its domains are removed, the cache
+is cleared and rows are kept for a **30-day restore window** (`/admin/sites` → *Recently deleted* →
+Restore or Purge now). A daily queue job hard-deletes anything past the window; restoring cancels
+that purge because the job re-checks the row.
+
+One sweeper (`runDailyCleanup`, job kind `cleanup.daily`) owns every keep window, and running it twice
+changes nothing the second time:
+
+| Data | Kept |
+| --- | --- |
+| Audit log | 24 months |
+| Snapshots per page | 50 (oldest pruned, the live snapshot is never removed) |
+| Import jobs | 90 days |
+| Import source files | 12 months, and only once nothing references them |
+| Unconfirmed uploads | 24 hours |
+| Deleted sites | 30 days, then purged |
+| Removed hostnames | 90 days, then the name is free again |
+| Suspended sites | reviewed after 12 months |
+
+The counts and a *Run the sweeper now* button live on `/admin/settings`.
+
 ## The component library
 
 35 definitions in five groups: `site-frame` (header, footer, announcement bar, sticky CTA),
@@ -105,7 +154,10 @@ and unpublish, and a platform settings screen (database > environment > default)
 and `content` (rich text, image, carousel, video embed, cards, steps, features, FAQ, divider, logos,
 games grid, comparison) plus utility blocks.
 
-Browse them, with live previews and their field schemas, at `/admin/components`.
+27 ship at launch and 8 more (`live-winners`, `vip-tiers`, `responsible-gaming`, `app-download`,
+`team-grid`, `timeline`, `image-gallery`, `schedule-table`) carry `wave: 2`, so the second wave is
+visible in the catalog and filterable without changing the editor. Browse them, with live previews
+and their field schemas, at `/admin/components`.
 
 Every component also supports the shared `appearance` controls (background, spacing, width,
 alignment, per-device visibility, anchor id), so layout rhythm is consistent without each component
@@ -124,7 +176,16 @@ inventing its own.
 • templates            curated templates exist and apply
 • domains              pending + TXT instruction, no false-positive verification
 • queue                a due job drains
+• archived pages       archive → publish refused (409) → restore as draft → unpublish refused
+• two-stage upload     pending row, presign presence, unconfirmed confirm refused, 5 MB cap
+• retention            second sweep is a no-op, keep windows, preview counts
+• site restore/purge   soft delete → restore → purge only when deleted
 ```
+
+`npm test` covers the same promises at unit level (96 checks): every legal and illegal transition in
+all eight machines, `lock_version` refusals, one-homepage enforcement, snapshot immutability and
+pruning, media verification and dedupe, hostname resolution and the identical 404, metadata assembly,
+and a catalog pass that renders all 35 components from their defaults.
 
 The public routes, sitemap, robots, media route and every admin screen were also fetched over HTTP
 and checked for expected markup and status codes.
@@ -140,10 +201,12 @@ app/
   edit/[siteId]/…                 Puck editor for pages and for global content
   media/[file]/route.ts           immutable, hashed media bytes
   sitemap.xml, robots.txt         per-host
-  api/sites/[siteId]/media        upload endpoint
+  api/sites/[siteId]/media        upload (local backend), presign and confirm endpoints
 lib/
   registry/                       component definitions (the single source of truth)
+  lifecycle.ts retention.ts       state machines, keep windows, the daily sweeper
   pages.ts globals.ts media.ts domains.ts templates.ts importer.ts
+  media/storage.ts                local | R2 behind one contract
   render.tsx public-page.ts       public tree and metadata
   cache.ts queue.ts audit.ts      Valkey-shaped cache, job queue, audit trail
   actions/                        server actions — the only mutation surface
@@ -153,6 +216,8 @@ components/
   admin/                          screens and client widgets
 drizzle/                          SQL migrations
 scripts/                          migrate, seed, smoke
+tests/                            vitest suites (lifecycle, pages, media, retention,
+                                  rendering, catalog)
 ```
 
 ## Decisions worth knowing
@@ -161,7 +226,12 @@ scripts/                          migrate, seed, smoke
   `{ schemaVersion, root: { props }, content: [{ type, props }] }`. The public renderer walks that
   tree directly, so visitor pages ship none of the editor.
 - **PGlite, not Postgres, in this build.** The SQL, JSONB queries (`jsonb_path_exists` for the media
-  reference check) and Drizzle schema are the production ones; only the transport differs.
+  reference check) and Drizzle schema are the production ones; only the transport differs. PGlite
+  allows one writer per directory, so `lib/db` records its pid next to the data and clears a dead
+  owner's lock on the next start; SIGTERM/SIGINT close the database before the process exits, which
+  is what keeps the directory healthy across dev-server restarts.
+- **Soft delete first, purge later.** A site delete is reversible for 30 days by design: the purge is
+  a queued job that re-checks the row, so a restore always wins. Purging a live site is refused.
 - **In-process cache instead of Valkey.** `lib/cache.ts` keeps the key shapes (`dom:`, `page:`,
   `site:`, `rl:`) and the rule that invalidation happens synchronously after commit; swapping in
   ioredis is a single file.

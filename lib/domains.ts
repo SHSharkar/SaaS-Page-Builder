@@ -6,6 +6,7 @@ import { assertHostname, normalizeHostname } from "@/lib/documents";
 import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { cacheDelete, cacheKeys } from "@/lib/cache";
+import { assertTransition } from "@/lib/lifecycle";
 
 export const MAX_DOMAINS_PER_SITE = 10;
 export const VERIFICATION_WINDOW_DAYS = 7;
@@ -87,6 +88,19 @@ export async function verifyDomain(domainId: string, actor: Actor | null): Promi
   if (domain.status === "active") {
     return { status: "active", checkedRecord: record };
   }
+  if (domain.status === "removed") {
+    assertTransition("domain", domain.status, "active", "This hostname was disconnected; connect it again before verifying.");
+  }
+
+  // pending → verifying: the attempt itself is recorded, so the screen can say
+  // "checked" even when DNS has not caught up yet.
+  assertTransition("domain", domain.status, "verifying");
+  if (domain.status === "pending") {
+    await db
+      .update(domains)
+      .set({ status: "verifying", updatedAt: new Date() })
+      .where(eq(domains.id, domainId));
+  }
 
   const expired =
     domain.createdAt.getTime() + VERIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000 < Date.now();
@@ -106,6 +120,7 @@ export async function verifyDomain(domainId: string, actor: Actor | null): Promi
   }
 
   if (found) {
+    assertTransition("domain", "verifying", "active");
     const [updated] = await db
       .update(domains)
       .set({
@@ -159,6 +174,7 @@ export async function retryDomainVerification(domainId: string, actor: Actor): P
   await ensureDb();
   const [domain] = await db.select().from(domains).where(eq(domains.id, domainId)).limit(1);
   if (!domain) throw new Error("Domain not found.");
+  assertTransition("domain", domain.status, "pending");
   await db
     .update(domains)
     .set({ status: "pending", failureReason: null, updatedAt: new Date() })
@@ -173,6 +189,7 @@ export async function removeDomain(domainId: string, actor: Actor): Promise<void
   if (domain.kind === "platform_subdomain") {
     throw new Error("The platform address always serves the site and cannot be removed.");
   }
+  assertTransition("domain", domain.status, "removed");
   await db
     .update(domains)
     .set({

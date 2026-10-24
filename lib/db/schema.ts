@@ -86,12 +86,15 @@ export const auditAction = pgEnum("audit_action", [
   "site_updated",
   "site_suspended",
   "site_deleted",
+  "site_restored",
+  "site_purged",
   "page_created",
   "page_updated",
   "page_deleted",
   "page_published",
   "page_unpublished",
   "page_archived",
+  "page_restored",
   "page_rolled_back",
   "page_scheduled",
   "homepage_set",
@@ -102,6 +105,7 @@ export const auditAction = pgEnum("audit_action", [
   "domain_failed",
   "domain_removed",
   "media_uploaded",
+  "media_confirmed",
   "media_deleted",
   "media_delete_blocked",
   "template_created",
@@ -113,6 +117,7 @@ export const auditAction = pgEnum("audit_action", [
   "import_failed",
   "settings_changed",
   "step_up_granted",
+  "cleanup_ran",
 ]);
 
 /* ------------------------------------------------------------------ *

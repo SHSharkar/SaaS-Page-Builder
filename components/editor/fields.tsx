@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ResolvedMedia } from "@/lib/media/refs";
+import { uploadFile } from "@/lib/media/upload-client";
 
 export type EditableMedia = ResolvedMedia;
 
@@ -44,13 +45,9 @@ export function MediaField({
     setBusy(true);
     setError(null);
     try {
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch(`/api/sites/${siteId}/media`, { method: "POST", body });
-      const payload = (await response.json()) as { asset?: EditableMedia; error?: string };
-      if (!response.ok || !payload.asset) throw new Error(payload.error ?? "Upload failed");
-      onUploaded(payload.asset);
-      onChange({ id: payload.asset.id });
+      const asset = await uploadFile(siteId, file);
+      onUploaded(asset);
+      onChange({ id: asset.id });
       setOpen(false);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");

@@ -3,6 +3,9 @@ import { db, ensureDb } from "@/lib/db";
 import { platformSettings } from "@/lib/db/schema";
 import { requireActor, can, countActiveAdmins } from "@/lib/auth/session";
 import { listRecentJobs } from "@/lib/queue";
+import { cleanupPreview } from "@/lib/retention";
+import { KEEP } from "@/lib/lifecycle";
+import { storageInfo } from "@/lib/media/storage";
 import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
 import { PlatformSettings } from "@/components/admin/platform-settings";
 
@@ -14,6 +17,8 @@ export default async function PlatformSettingsPage() {
   const rows = await db.select().from(platformSettings).orderBy(desc(platformSettings.key));
   const jobs = await listRecentJobs(12);
   const admins = await countActiveAdmins();
+  const preview = await cleanupPreview();
+  const storage = storageInfo();
 
   return (
     <div>
@@ -26,6 +31,17 @@ export default async function PlatformSettingsPage() {
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <PlatformSettings
+          preview={preview}
+          keepWindows={[
+            { label: "Audit log", value: `${KEEP.auditMonths} months` },
+            { label: "Snapshots per page", value: String(KEEP.versionsPerPage) },
+            { label: "Import jobs", value: `${KEEP.importJobDays} days` },
+            { label: "Import files", value: `${KEEP.importFileMonths} months` },
+            { label: "Unconfirmed uploads", value: `${KEEP.pendingMediaHours} hours` },
+            { label: "Deleted site, restorable", value: `${KEEP.siteRestoreDays} days` },
+            { label: "Removed hostname", value: `${KEEP.removedDomainDays} days` },
+            { label: "Suspended site review", value: `${KEEP.suspendedReviewMonths} months` },
+          ]}
           settings={rows.map((row) => ({
             key: row.key,
             value: row.isSecret ? "••••••••" : JSON.stringify(row.value).replace(/^"|"$/g, ""),
@@ -41,7 +57,7 @@ export default async function PlatformSettingsPage() {
                 ["Node", process.version],
                 ["NODE_ENV", process.env.NODE_ENV ?? "development"],
                 ["Host fallback", process.env.ALLOW_HOST_FALLBACK === "false" ? "disabled" : "first active site"],
-                ["Media dir", process.env.MEDIA_DIR ?? "./data/media"],
+                ["Media store", storage.backend === "r2" ? `R2 · ${storage.bucket}` : storage.mediaDir ?? "./data/media"],
                 ["Database", `PGlite · ${process.env.PGLITE_DIR ?? "./data/pg"}`],
                 ["Active admins", String(admins)],
               ].map(([label, value]) => (

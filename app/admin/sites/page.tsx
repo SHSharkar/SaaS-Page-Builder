@@ -3,6 +3,8 @@ import { listSites, platformHost } from "@/lib/sites";
 import { requireActor } from "@/lib/auth/session";
 import { siteCounts } from "@/lib/sites";
 import { PageHeader, Panel, StatusBadge, EmptyState, relativeTime } from "@/components/admin/ui";
+import { listDeletedSites } from "@/lib/sites";
+import { DeletedSites } from "@/components/admin/deleted-sites";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +12,7 @@ export default async function SitesPage() {
   await requireActor();
   const sites = await listSites();
   const counts = await Promise.all(sites.map((row) => siteCounts(row.site.id)));
+  const deleted = await listDeletedSites();
 
   return (
     <div>
@@ -104,6 +107,16 @@ export default async function SitesPage() {
           })}
         </div>
       )}
+
+      <DeletedSites
+        sites={deleted.map((row) => ({
+          id: row.site.id,
+          name: row.site.name,
+          slug: row.site.slug,
+          deletedAt: row.site.deletedAt ? row.site.deletedAt.toISOString() : null,
+          restorableUntil: row.restorableUntil ? row.restorableUntil.toISOString() : null,
+        }))}
+      />
     </div>
   );
 }

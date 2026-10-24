@@ -9,6 +9,7 @@ import {
   saveDraft,
   unpublishPage,
   archivePage,
+  restorePage,
   rollbackToVersion,
   setHomepage,
   updatePageMeta,
@@ -119,6 +120,17 @@ export async function archiveAction(input: { siteId: string; pageId: string }): 
     await archivePage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: "Archived" };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function restoreAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
+  try {
+    const actor = await requireRole("editor");
+    await restorePage(input.siteId, input.pageId, actor);
+    revalidatePath(`/admin/sites/${input.siteId}/pages/${input.pageId}`);
+    return { ok: true, message: "Restored as a draft — publish when you are ready." };
   } catch (error) {
     return failure(error);
   }

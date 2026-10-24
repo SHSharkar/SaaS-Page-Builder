@@ -16,6 +16,8 @@ import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { cacheGet, cacheKeys, cacheSet, consumeRateLimit, invalidatePageCache } from "@/lib/cache";
 import { validateDocument } from "@/lib/registry";
+import { assertTransition } from "@/lib/lifecycle";
+import { LifecycleError, NotFoundError } from "@/lib/errors";
 
 export const MAX_VERSIONS_PER_PAGE = 50;
 
@@ -26,14 +28,23 @@ export function primeGlobalDocuments(_documents: unknown): void {
 
 export async function listPages(siteId: string) {
   await ensureDb();
-  return db
-    .select({
-      page: pages,
-      versionCount: sql<number>`(select count(*)::int from page_version v where v.page_id = ${pages.id})`,
-    })
+  const rows = await db
+    .select()
     .from(pages)
     .where(and(eq(pages.siteId, siteId), isNull(pages.deletedAt)))
     .orderBy(desc(pages.isHomepage), asc(pages.title));
+
+  // Counted in its own statement: a correlated subquery written in a drizzle
+  // select list loses its table qualifier and silently counts zero rows.
+  const counts = await db
+    .select({ pageId: pageVersions.pageId, count: sql<number>`count(*)::int` })
+    .from(pageVersions)
+    .innerJoin(pages, eq(pages.id, pageVersions.pageId))
+    .where(eq(pages.siteId, siteId))
+    .groupBy(pageVersions.pageId);
+  const byPage = new Map(counts.map((row) => [row.pageId, Number(row.count)]));
+
+  return rows.map((page) => ({ page, versionCount: byPage.get(page.id) ?? 0 }));
 }
 
 export async function getPage(siteId: string, pageId: string): Promise<Page | null> {
@@ -221,7 +232,10 @@ export async function publishPage(
     throw new Error("This page has been published 30 times in the last hour. Try again later.");
   }
   const page = await getPage(siteId, pageId);
-  if (!page) throw new Error("Page not found.");
+  if (!page) throw new NotFoundError("Page");
+  if (page.status === "archived") {
+    assertTransition("page", page.status, "published", "Restore the page from the archive before publishing it.");
+  }
   const validation = validateDocument(page.draftDocument);
   if (!validation.ok) throw new Error(validation.errors.join(" "));
 
@@ -283,7 +297,11 @@ export async function publishPage(
 export async function unpublishPage(siteId: string, pageId: string, actor: Actor): Promise<void> {
   await ensureDb();
   const page = await getPage(siteId, pageId);
-  if (!page) throw new Error("Page not found.");
+  if (!page) throw new NotFoundError("Page");
+  // A draft was never live, so there is nothing to take down.
+  if (page.status !== "published") {
+    throw new LifecycleError("page", page.status, "draft", "Only a published page can be taken offline.");
+  }
   await db.update(pages).set({ status: "draft", updatedAt: new Date() }).where(eq(pages.id, pageId));
   // A takedown is never delayed by a cache: clear now, in this request.
   invalidatePageCache(siteId);
@@ -300,7 +318,8 @@ export async function unpublishPage(siteId: string, pageId: string, actor: Actor
 export async function archivePage(siteId: string, pageId: string, actor: Actor): Promise<void> {
   await ensureDb();
   const page = await getPage(siteId, pageId);
-  if (!page) throw new Error("Page not found.");
+  if (!page) throw new NotFoundError("Page");
+  assertTransition("page", page.status, "archived");
   await db
     .update(pages)
     .set({ status: "archived", isHomepage: false, updatedAt: new Date() })
@@ -309,6 +328,24 @@ export async function archivePage(siteId: string, pageId: string, actor: Actor):
   await recordAudit({
     action: "page_archived",
     summary: `Archived “${page.title}”`,
+    siteId,
+    actor,
+    targetType: "page",
+    targetId: pageId,
+  });
+}
+
+/** Archived → draft. A restored page comes back as a draft: it must be published again. */
+export async function restorePage(siteId: string, pageId: string, actor: Actor): Promise<void> {
+  await ensureDb();
+  const page = await getPage(siteId, pageId);
+  if (!page) throw new NotFoundError("Page");
+  assertTransition("page", page.status, "draft");
+  await db.update(pages).set({ status: "draft", updatedAt: new Date() }).where(eq(pages.id, pageId));
+  invalidatePageCache(siteId);
+  await recordAudit({
+    action: "page_restored",
+    summary: `Restored “${page.title}” from the archive as a draft`,
     siteId,
     actor,
     targetType: "page",
@@ -335,7 +372,10 @@ export async function rollbackToVersion(
 ): Promise<PublishResult> {
   await ensureDb();
   const page = await getPage(siteId, pageId);
-  if (!page) throw new Error("Page not found.");
+  if (!page) throw new NotFoundError("Page");
+  if (page.status === "archived") {
+    assertTransition("page", page.status, "published", "Restore the page from the archive before rolling it back.");
+  }
   const [version] = await db
     .select()
     .from(pageVersions)
@@ -398,7 +438,13 @@ export async function schedulePublish(
 ): Promise<void> {
   await ensureDb();
   const page = await getPage(siteId, pageId);
-  if (!page) throw new Error("Page not found.");
+  if (!page) throw new NotFoundError("Page");
+  if (when && operator === "publish" && page.status === "archived") {
+    throw new Error("Restore the page from the archive before scheduling a publish.");
+  }
+  if (when && operator === "unpublish" && page.status !== "published") {
+    throw new Error("Only a published page can be scheduled to come down.");
+  }
   await db
     .update(pages)
     .set(

@@ -16,6 +16,7 @@ import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { uploadMedia, sniffMime, MAX_IMAGE_BYTES } from "@/lib/media";
 import { createPage } from "@/lib/pages";
+import { assertTransition } from "@/lib/lifecycle";
 
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
@@ -584,28 +585,71 @@ export async function createImportJob(options: {
   const html = options.bytes.toString("utf8");
   const mapping = analyzeHtml(html);
 
-  const [job] = await db
+  // uploaded → parsing → mapped → in_review, one step at a time, so a crashed
+  // analysis leaves the job visibly stuck in `parsing` rather than pretending
+  // it produced a mapping.
+  const [queued] = await db
     .insert(importJobs)
     .values({
       siteId: options.siteId,
-      status: "in_review",
+      status: "uploaded",
       sourceName: options.filename,
       fileMediaId: asset.id,
-      mappingResult: mapping,
       createdBy: options.actor.user.id,
     })
     .returning();
 
   await recordAudit({
-    action: "import_mapped",
-    summary: `Mapped “${options.filename}”: ${mapping.counts.mapped} of ${mapping.counts.sections} sections recognised`,
+    action: "import_uploaded",
+    summary: `Uploaded “${options.filename}” for analysis`,
     siteId: options.siteId,
     actor: options.actor,
     targetType: "import_job",
-    targetId: job.id,
+    targetId: queued.id,
   });
 
-  return job;
+  assertTransition("import", queued.status, "parsing");
+  await db
+    .update(importJobs)
+    .set({ status: "parsing", updatedAt: new Date() })
+    .where(eq(importJobs.id, queued.id));
+
+  try {
+    assertTransition("import", "parsing", "mapped");
+    const [mapped] = await db
+      .update(importJobs)
+      .set({ status: "mapped", mappingResult: mapping, updatedAt: new Date() })
+      .where(eq(importJobs.id, queued.id))
+      .returning();
+
+    assertTransition("import", mapped.status, "in_review");
+    const [job] = await db
+      .update(importJobs)
+      .set({ status: "in_review", updatedAt: new Date() })
+      .where(eq(importJobs.id, queued.id))
+      .returning();
+
+    await recordAudit({
+      action: "import_mapped",
+      summary: `Mapped “${options.filename}”: ${mapping.counts.mapped} of ${mapping.counts.sections} sections recognised`,
+      siteId: options.siteId,
+      actor: options.actor,
+      targetType: "import_job",
+      targetId: job.id,
+    });
+
+    return job;
+  } catch (error) {
+    await db
+      .update(importJobs)
+      .set({
+        status: "failed",
+        failureReason: error instanceof Error ? error.message : String(error),
+        updatedAt: new Date(),
+      })
+      .where(eq(importJobs.id, queued.id));
+    throw error;
+  }
 }
 
 export async function getImportJob(siteId: string, jobId: string): Promise<ImportJob | null> {
@@ -681,6 +725,7 @@ export async function applyImportJob(options: {
   }
   const mapping = job.mappingResult;
   if (!mapping) throw new Error("This import has no mapping yet.");
+  assertTransition("import", job.status, "applied");
 
   const content: PageDocument["content"] = [];
   let copiedAssets = 0;
@@ -779,6 +824,7 @@ export async function discardImportJob(siteId: string, jobId: string, actor: Act
   await ensureDb();
   const job = await getImportJob(siteId, jobId);
   if (!job) throw new Error("Import job not found.");
+  assertTransition("import", job.status, "discarded");
   await db
     .update(importJobs)
     .set({ status: "discarded", completedAt: new Date(), updatedAt: new Date() })

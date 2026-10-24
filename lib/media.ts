@@ -1,16 +1,17 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { db, ensureDb } from "@/lib/db";
 import { mediaAssets, type MediaAsset } from "@/lib/db/schema";
 import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { cacheDelete, cacheGet, cacheKeys, cacheSet } from "@/lib/cache";
 import type { ResolvedMedia } from "@/lib/media/refs";
+import { deleteObject, getObject, headObject, presignPut, publicUrlFor, putObject, storageBackend } from "@/lib/media/storage";
+import { assertTransition, hoursAgo, KEEP } from "@/lib/lifecycle";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-export const MEDIA_DIR = process.env.MEDIA_DIR ?? path.join(process.cwd(), "data", "media");
+export { MEDIA_DIR } from "@/lib/media/storage";
 
 const SIGNATURES: { mime: string; ext: string; test: (bytes: Buffer) => boolean }[] = [
   { mime: "image/png", ext: "png", test: (b) => b.subarray(0, 8).toString("hex") === "89504e470d0a1a0a" },
@@ -122,6 +123,129 @@ export type UploadResult = {
   deduplicated: boolean;
 };
 
+/**
+ * The direct-upload half of the media lifecycle: the row is created `pending`,
+ * the bytes land in storage, they are read back and verified, and only then
+ * does the row become `ready`. A pending row that never confirms is swept.
+ */
+export async function beginUpload(options: {
+  siteId: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  actor: Actor;
+  kind?: "image" | "file" | "import_reference";
+  altText?: string;
+}): Promise<{ mediaId: string; uploadUrl: string | null; headers: Record<string, string>; storageKey: string }> {
+  await ensureDb();
+  if (options.sizeBytes > MAX_IMAGE_BYTES) throw new Error("Files are capped at 5 MB.");
+  const ext = extensionFor(options.contentType);
+  if (!ext) throw new Error("That file type is not accepted. Use PNG, JPEG, WebP, GIF or SVG.");
+
+  const token = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  const key = `${options.siteId}/pending-${token}.${ext}`;
+  const [row] = await db
+    .insert(mediaAssets)
+    .values({
+      siteId: options.siteId,
+      kind: options.kind ?? (options.contentType.startsWith("image/") ? "image" : "file"),
+      storageKey: key,
+      publicUrl: publicUrlFor(key),
+      mimeType: options.contentType,
+      sizeBytes: options.sizeBytes,
+      // A pending row has no checksum yet: it is assigned when bytes verify.
+      checksum: `pending:${token}`,
+      altText: options.altText ?? options.filename.replace(/\.[a-z0-9]+$/i, "").slice(0, 160),
+      status: "pending",
+      uploadedBy: options.actor.user.id,
+    })
+    .returning();
+
+  const presigned = await presignPut(key, options.contentType);
+  return {
+    mediaId: row.id,
+    uploadUrl: presigned?.url ?? null,
+    headers: presigned?.headers ?? { "Content-Type": options.contentType },
+    storageKey: key,
+  };
+}
+
+/** Re-reads the stored bytes and only then flips pending → ready. */
+export async function confirmUpload(options: {
+  siteId: string;
+  mediaId: string;
+  actor: Actor;
+  expectedChecksum?: string;
+}): Promise<MediaAsset> {
+  await ensureDb();
+  const [row] = await db
+    .select()
+    .from(mediaAssets)
+    .where(and(eq(mediaAssets.id, options.mediaId), eq(mediaAssets.siteId, options.siteId)))
+    .limit(1);
+  if (!row) throw new Error("That upload does not exist.");
+  assertTransition("media", row.status, "ready");
+
+  const head = await headObject(row.storageKey);
+  if (!head) throw new Error("The file was never written to storage. Upload it again.");
+
+  const bytes = await getObject(row.storageKey);
+  if (!bytes) throw new Error("The file could not be read back for verification.");
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("Files are capped at 5 MB.");
+  const sniffed = sniffMime(bytes);
+  if (!sniffed || sniffed.mime !== row.mimeType) {
+    await markMediaDeleted(row.id);
+    throw new Error("The uploaded bytes are not the file type that was declared.");
+  }
+  const checksum = createHash("sha256").update(bytes).digest("hex");
+  if (options.expectedChecksum && options.expectedChecksum !== checksum) {
+    await markMediaDeleted(row.id);
+    throw new Error("The checksum did not match the uploaded file.");
+  }
+
+  // Deduplicate after the bytes exist: the same image uploaded twice keeps one row.
+  const [duplicate] = await db
+    .select()
+    .from(mediaAssets)
+    .where(and(eq(mediaAssets.siteId, row.siteId), eq(mediaAssets.checksum, checksum), eq(mediaAssets.status, "ready")))
+    .limit(1);
+  if (duplicate) {
+    await markMediaDeleted(row.id);
+    return duplicate;
+  }
+
+  const dimensions = row.kind === "image" ? probeDimensions(bytes, sniffed.mime) : { width: null, height: null };
+  const finalKey = `${row.siteId}/${checksum.slice(0, 16)}.${sniffed.ext}`;
+  if (finalKey !== row.storageKey) await putObject(finalKey, bytes, sniffed.mime);
+
+  const [updated] = await db
+    .update(mediaAssets)
+    .set({
+      status: "ready",
+      storageKey: finalKey,
+      publicUrl: publicUrlFor(finalKey),
+      checksum,
+      sizeBytes: bytes.length,
+      width: dimensions.width,
+      height: dimensions.height,
+      updatedAt: new Date(),
+    })
+    .where(eq(mediaAssets.id, row.id))
+    .returning();
+
+  if (finalKey !== row.storageKey) await deleteObject(row.storageKey);
+  cacheDelete(`media:${row.siteId}`);
+  await recordAudit({
+    action: "media_confirmed",
+    summary: `Confirmed upload “${row.altText ?? finalKey}” (${Math.round(bytes.length / 1024)} KB)`,
+    siteId: row.siteId,
+    actor: options.actor,
+    targetType: "media_asset",
+    targetId: row.id,
+  });
+  return updated;
+}
+
 export async function uploadMedia(options: {
   siteId: string;
   bytes: Buffer;
@@ -152,31 +276,48 @@ export async function uploadMedia(options: {
     .limit(1);
   if (existing) return { asset: existing, deduplicated: true };
 
-  const key = `${siteId}/${checksum.slice(0, 16)}.${sniffed.ext}`;
-  const destination = path.join(MEDIA_DIR, key);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await writeFile(destination, bytes);
-
-  const dimensions = kind === "image" ? probeDimensions(bytes, sniffed.mime) : { width: null, height: null };
-
-  const [asset] = await db
+  // Stage 1: the row exists but is not usable yet.
+  const key = `${siteId}/pending-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}.${sniffed.ext}`;
+  const [pending] = await db
     .insert(mediaAssets)
     .values({
       siteId,
       kind,
       storageKey: key,
-      publicUrl: `/media/${checksum.slice(0, 16)}.${sniffed.ext}`,
+      publicUrl: publicUrlFor(key),
       mimeType: sniffed.mime,
       sizeBytes: bytes.length,
-      width: dimensions.width,
-      height: dimensions.height,
-      checksum,
+      checksum: `pending:${key}`,
       originalUrl: options.originalUrl ?? null,
       altText: options.altText ?? options.filename.replace(/\.[a-z0-9]+$/i, "").slice(0, 160),
-      status: "ready",
+      status: "pending",
       uploadedBy: actor.user.id,
     })
     .returning();
+
+  // Stage 2: bytes land in storage.
+  await putObject(key, bytes, sniffed.mime);
+
+  // Stage 3: verification, then pending → ready with the final content-hashed key.
+  const finalKey = `${siteId}/${checksum.slice(0, 16)}.${sniffed.ext}`;
+  const dimensions = kind === "image" ? probeDimensions(bytes, sniffed.mime) : { width: null, height: null };
+  const [asset] = await db
+    .update(mediaAssets)
+    .set({
+      status: "ready",
+      storageKey: finalKey,
+      publicUrl: publicUrlFor(finalKey),
+      checksum,
+      width: dimensions.width,
+      height: dimensions.height,
+      updatedAt: new Date(),
+    })
+    .where(eq(mediaAssets.id, pending.id))
+    .returning();
+  if (finalKey !== key) {
+    await putObject(finalKey, bytes, sniffed.mime);
+    await deleteObject(key);
+  }
 
   cacheDelete(`media:${siteId}`);
   await recordAudit({
@@ -189,6 +330,40 @@ export async function uploadMedia(options: {
   });
 
   return { asset, deduplicated: false };
+}
+
+function extensionFor(contentType: string): string | null {
+  const map: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+    "text/html": "html",
+    "application/pdf": "pdf",
+  };
+  return map[contentType] ?? null;
+}
+
+async function markMediaDeleted(mediaId: string): Promise<void> {
+  await db
+    .update(mediaAssets)
+    .set({ status: "deleted", deletedAt: new Date(), updatedAt: new Date() })
+    .where(eq(mediaAssets.id, mediaId));
+}
+
+/** The sweeper for pending rows: an upload that never confirmed never becomes visible. */
+export async function sweepPendingMedia(): Promise<number> {
+  await ensureDb();
+  const stale = await db
+    .select()
+    .from(mediaAssets)
+    .where(and(eq(mediaAssets.status, "pending"), lte(mediaAssets.createdAt, hoursAgo(KEEP.pendingMediaHours))));
+  for (const row of stale) {
+    await deleteObject(row.storageKey);
+    await markMediaDeleted(row.id);
+  }
+  return stale.length;
 }
 
 export type MediaReference = { pageId: string | null; pageTitle: string };
@@ -271,7 +446,7 @@ export async function deleteMedia(siteId: string, mediaId: string, actor: Actor)
   });
   // File removal happens after the row is marked, sweepable if it fails.
   try {
-    await unlink(path.join(MEDIA_DIR, asset.storageKey));
+    await deleteObject(asset.storageKey);
   } catch {
     /* the orphan sweep is the backstop */
   }
@@ -279,18 +454,16 @@ export async function deleteMedia(siteId: string, mediaId: string, actor: Actor)
 
 export async function readMediaFile(publicUrl: string): Promise<Buffer | null> {
   const name = publicUrl.replace(/^\/media\//, "");
-  if (!/^[a-z0-9]+\.(png|jpg|jpeg|webp|gif|svg)$/i.test(name)) return null;
+  if (!/^[a-z0-9]+\.(png|jpg|jpeg|webp|gif|svg|html)$/i.test(name)) return null;
   const files = await db.execute<{ storage_key: string }>(
     sql`select storage_key from media_asset where public_url = ${publicUrl} and status = 'ready' limit 1`,
   );
   const key = files.rows[0]?.storage_key;
   if (!key) return null;
-  try {
-    return await readFile(path.join(MEDIA_DIR, key));
-  } catch {
-    return null;
-  }
+  return getObject(key);
 }
+
+export { storageBackend };
 
 export async function ingestSeedImage(options: {
   siteId: string;

@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteMediaAction, updateAltTextAction } from "@/lib/actions/media";
+import { uploadFile } from "@/lib/media/upload-client";
 import type { ActionResult } from "./action";
 import { Notice } from "./action";
 
@@ -35,19 +36,16 @@ export function MediaLibrary({ siteId, assets }: { siteId: string; assets: Asset
     setUploading(true);
     setState(null);
     for (const file of Array.from(files)) {
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch(`/api/sites/${siteId}/media`, { method: "POST", body });
-      const payload = (await response.json().catch(() => ({}))) as { error?: string; deduplicated?: boolean };
-      if (!response.ok) {
-        setState({ ok: false, error: payload.error ?? `Upload failed (${response.status})` });
-      } else {
+      try {
+        const asset = await uploadFile(siteId, file);
         setState({
           ok: true,
-          message: payload.deduplicated
+          message: asset.deduplicated
             ? `${file.name} was already in the library — the existing copy is reused.`
-            : `${file.name} uploaded.`,
+            : `${file.name} uploaded and verified.`,
         });
+      } catch (error) {
+        setState({ ok: false, error: error instanceof Error ? error.message : "Upload failed" });
       }
     }
     setUploading(false);

@@ -15,6 +15,8 @@ export const JOB_KINDS = [
   "domain.verify",
   "session.sweep",
   "sitemap.refresh",
+  "cleanup.daily",
+  "site.purge",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
@@ -101,6 +103,22 @@ async function handle(jobKind: string, payload: Record<string, unknown>): Promis
       cacheClear();
       break;
     }
+    case "cleanup.daily": {
+      const { runDailyCleanup } = await import("@/lib/retention");
+      await runDailyCleanup(actor);
+      break;
+    }
+    case "site.purge": {
+      const { purgeSite, getSiteRow } = await import("@/lib/sites");
+      const siteId = String(payload.siteId);
+      const site = await getSiteRow(siteId);
+      // Only a site whose restore window has closed is purged; a restored site
+      // makes the queued job a no-op.
+      if (!site) break;
+      if (site.status !== "deleted") break;
+      await purgeSite(siteId);
+      break;
+    }
     default:
       throw new Error(`Unknown job kind: ${jobKind}`);
   }
@@ -164,6 +182,7 @@ export async function scheduleRecurring(): Promise<void> {
   const now = Date.now();
   await enqueue("invite.sweep", {}, { dedupeKey: "invite.sweep:daily", runAt: new Date(now + 60_000) });
   await enqueue("session.sweep", {}, { dedupeKey: "session.sweep:daily", runAt: new Date(now + 120_000) });
+  await enqueue("cleanup.daily", {}, { dedupeKey: `cleanup.daily:${new Date(now).toISOString().slice(0, 10)}`, runAt: new Date(now + 300_000) });
   await enqueue("version.prune", {}, { dedupeKey: "version.prune:daily", runAt: new Date(now + 180_000) });
   await enqueue("media.orphan-sweep", {}, { dedupeKey: "media.sweep:weekly", runAt: new Date(now + 240_000) });
 }

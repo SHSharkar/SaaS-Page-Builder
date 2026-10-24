@@ -1,7 +1,16 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updatePageMetaAction, scheduleAction, publishAction, unpublishAction, archiveAction, setHomepageAction, saveAsTemplateAction } from "@/lib/actions/pages";
+import {
+  updatePageMetaAction,
+  scheduleAction,
+  publishAction,
+  unpublishAction,
+  archiveAction,
+  restoreAction,
+  setHomepageAction,
+  saveAsTemplateAction,
+} from "@/lib/actions/pages";
 import type { PageSeo } from "@/lib/documents";
 import type { ActionResult } from "./action";
 import { Notice } from "./action";
@@ -313,17 +322,28 @@ export function PageSettings({
           >
             {isHomepage ? "Homepage" : "Make homepage"}
           </button>
-          <button
-            type="button"
-            className="btn-admin btn-admin-danger"
-            disabled={pending}
-            onClick={() => {
-              if (!window.confirm("Archive this page? Its URL starts returning the site 404 immediately.")) return;
-              submit(() => archiveAction({ siteId, pageId }));
-            }}
-          >
-            Archive
-          </button>
+          {status === "archived" ? (
+            <button
+              type="button"
+              className="btn-admin btn-admin-secondary"
+              disabled={pending}
+              onClick={() => submit(() => restoreAction({ siteId, pageId }))}
+            >
+              Restore from archive
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-admin btn-admin-danger"
+              disabled={pending}
+              onClick={() => {
+                if (!window.confirm("Archive this page? Its URL starts returning the site 404 immediately.")) return;
+                submit(() => archiveAction({ siteId, pageId }));
+              }}
+            >
+              Archive
+            </button>
+          )}
         </div>
       </section>
 

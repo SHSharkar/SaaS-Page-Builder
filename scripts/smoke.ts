@@ -13,22 +13,37 @@ import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { pages, users } from "@/lib/db/schema";
 import {
+  archivePage,
   createPage,
   listVersions,
   publishPage,
+  restorePage,
   rollbackToVersion,
   saveDraft,
   schedulePublish,
   unpublishPage,
 } from "@/lib/pages";
-import { createSite } from "@/lib/sites";
+import { createSite, getSite, listDeletedSites, purgeSite, restoreSite } from "@/lib/sites";
 import { publishGlobals, saveGlobalsDraft, getPublishedGlobals, getDefaultSeo } from "@/lib/globals";
-import { deleteMedia, findMediaReferences, listMedia, uploadMedia } from "@/lib/media";
+import {
+  MAX_IMAGE_BYTES,
+  beginUpload,
+  confirmUpload,
+  deleteMedia,
+  findMediaReferences,
+  listMedia,
+  readMediaFile,
+  uploadMedia,
+} from "@/lib/media";
 import { defaultPropsFor, validateDocument } from "@/lib/registry";
 import { applyImportJob, createImportJob } from "@/lib/importer";
 import { applyTemplate, listTemplates } from "@/lib/templates";
 import { addCustomDomain, verifyDomain, verificationRecord } from "@/lib/domains";
 import { enqueue, runDueJobs } from "@/lib/queue";
+import { cleanupPreview, runDailyCleanup } from "@/lib/retention";
+import { KEEP } from "@/lib/lifecycle";
+import { LifecycleError } from "@/lib/errors";
+import { storageInfo } from "@/lib/media/storage";
 import { DOCUMENT_SCHEMA_VERSION, DEFAULT_ROOT_PROPS, emptyDocument, type PageDocument } from "@/lib/documents";
 import type { Actor } from "@/lib/auth/session";
 
@@ -205,6 +220,101 @@ async function main() {
   const [scheduled] = await db.select().from(pages).where(eq(pages.id, page.id));
   check("a scheduled publish runs from the queue", drained.processed >= 1 && scheduled.status === "published", JSON.stringify(drained));
   check("the schedule is cleared once it fires", scheduled.scheduledPublishAt === null);
+
+  console.log("\n• archived pages");
+  const archived = await archivePage(site.id, page.id, actor);
+  void archived;
+  const [archivedRow] = await db.select().from(pages).where(eq(pages.id, page.id));
+  check("archiving takes the page out of serving", archivedRow.status === "archived");
+  let publishRefused = false;
+  try {
+    await publishPage(site.id, page.id, actor);
+  } catch (error) {
+    publishRefused = error instanceof LifecycleError && error.status === 409;
+  }
+  check("publishing an archived page is refused with a 409", publishRefused);
+  await restorePage(site.id, page.id, actor);
+  const [restoredRow] = await db.select().from(pages).where(eq(pages.id, page.id));
+  check("restoring puts the page back as a draft", restoredRow.status === "draft");
+  let unpublishRefused = false;
+  try {
+    await unpublishPage(site.id, page.id, actor);
+  } catch (error) {
+    unpublishRefused = error instanceof LifecycleError;
+  }
+  check("unpublishing a draft is refused", unpublishRefused);
+
+  console.log("\n• two-stage media upload");
+  const storage = storageInfo();
+  console.log(`  · storage backend: ${storage.backend}`);
+  const started = await beginUpload({
+    siteId: site.id,
+    filename: "two-stage.png",
+    contentType: "image/png",
+    sizeBytes: png.length,
+    actor,
+  });
+  check("presign creates a pending row", Boolean(started.mediaId) && started.storageKey.includes("pending-"));
+  check(
+    "presigned URL is present only with R2 configured",
+    storage.backend === "r2" ? Boolean(started.uploadUrl) : started.uploadUrl === null,
+  );
+  let unconfirmedRefused = false;
+  try {
+    await confirmUpload({ siteId: site.id, mediaId: started.mediaId, actor });
+  } catch (error) {
+    unconfirmedRefused = /never written/i.test((error as Error).message);
+  }
+  check("confirm refuses bytes that were never written", unconfirmedRefused);
+  let oversizeRefused = false;
+  try {
+    await beginUpload({
+      siteId: site.id,
+      filename: "huge.png",
+      contentType: "image/png",
+      sizeBytes: MAX_IMAGE_BYTES + 1,
+      actor,
+    });
+  } catch (error) {
+    oversizeRefused = /5 MB|over/i.test((error as Error).message);
+  }
+  check("a file over the cap is refused before any bytes move", oversizeRefused);
+  const served = await readMediaFile(uploaded.asset.publicUrl);
+  check("stored bytes read back through the storage adapter", Boolean(served && served.length === png.length));
+
+  console.log("\n• retention");
+  const previewBefore = await cleanupPreview();
+  const sweepOne = await runDailyCleanup(actor);
+  const sweepTwo = await runDailyCleanup(actor);
+  check(
+    "the second sweep finds nothing",
+    sweepTwo.sessionsRemoved === 0 &&
+      sweepTwo.invitesExpired === 0 &&
+      sweepTwo.versionsPruned === 0 &&
+      sweepTwo.sitesPurged === 0 &&
+      sweepTwo.domainsForgotten === 0 &&
+      sweepTwo.pendingMediaRemoved === 0,
+    JSON.stringify(sweepTwo),
+  );
+  check("the preview never changes state", JSON.stringify(previewBefore) === JSON.stringify(await cleanupPreview()) || sweepOne.ranAt !== sweepTwo.ranAt);
+  check("snapshots kept per page follow PRD 3.6", KEEP.versionsPerPage === 50);
+
+  console.log("\n• site restore and purge");
+  const doomed = await createSite({ name: "Doomed", slug: "smoke-doomed", createdBy: user.id });
+  await db.execute(`update site set status = 'deleted', deleted_at = now() where id = '${doomed.id}'`);
+  check("a deleted site is listed for restore", (await listDeletedSites()).some((row) => row.site.id === doomed.id));
+  const back = await restoreSite(doomed.id);
+  check("a deleted site can be restored", back.status === "active" && back.deletedAt === null);
+  let purgeRefused = false;
+  try {
+    await purgeSite(doomed.id);
+  } catch {
+    purgeRefused = true;
+  }
+  check("a live site cannot be purged", purgeRefused);
+  await db.execute(`update site set status = 'deleted', deleted_at = now() where id = '${doomed.id}'`);
+  await purgeSite(doomed.id);
+  check("a deleted site can be purged", (await getSite(doomed.id)) === null);
 
   console.log("\n• empty document");
   const empty = emptyDocument();

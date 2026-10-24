@@ -2,11 +2,22 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { domains, users } from "@/lib/db/schema";
 import { requireActor, requireRole, requireStepUp } from "@/lib/auth/session";
-import { createSite, getSite, renameSite, setSiteStatus, updateSiteTheme, listSiteDomains } from "@/lib/sites";
+import {
+  createSite,
+  getSite,
+  getSiteRow,
+  purgeSite,
+  renameSite,
+  restoreSite,
+  setSiteStatus,
+  updateSiteTheme,
+  listSiteDomains,
+} from "@/lib/sites";
+import { KEEP, daysFromNow } from "@/lib/lifecycle";
 import { addCustomDomain, makePrimaryDomain, removeDomain, retryDomainVerification, verifyDomain } from "@/lib/domains";
 import { recordAudit } from "@/lib/audit";
 import { invalidateSite } from "@/lib/cache";
@@ -170,9 +181,16 @@ export async function deleteSiteAction(input: { siteId: string }): Promise<Actio
     await setSiteStatus(input.siteId, "deleted");
     await db.update(domains).set({ status: "removed", removedAt: new Date() }).where(eq(domains.siteId, input.siteId));
     invalidateSite(input.siteId, hostnames);
+    // Two-stage: serving stops now, rows stay for the restore window, and the
+    // queued purge is a no-op if the site is restored first.
+    await enqueue(
+      "site.purge",
+      { siteId: input.siteId },
+      { runAt: daysFromNow(KEEP.siteRestoreDays), dedupeKey: `site.purge:${input.siteId}` },
+    );
     await recordAudit({
       action: "site_deleted",
-      summary: `Deleted the site “${site.name}” (soft delete, restorable within the window)`,
+      summary: `Deleted the site “${site.name}” — restorable for ${KEEP.siteRestoreDays} days`,
       siteId: input.siteId,
       actor,
       targetType: "site",
@@ -183,6 +201,60 @@ export async function deleteSiteAction(input: { siteId: string }): Promise<Actio
     if (error instanceof Error && error.message === "NEXT_REDIRECT") throw error;
     return failure(error);
   }
+}
+
+export async function restoreSiteAction(input: { siteId: string }): Promise<ActionState> {
+  try {
+    const actor = await requireRole("admin");
+    await requireStepUp(actor);
+    const site = await getSiteRow(input.siteId);
+    if (!site) throw new Error("Site not found.");
+    const restored = await restoreSite(input.siteId);
+    await db
+      .update(domains)
+      .set({ status: "active", removedAt: null, updatedAt: new Date() })
+      .where(and(eq(domains.siteId, input.siteId), eq(domains.status, "removed"), eq(domains.kind, "platform_subdomain")));
+    await recordAudit({
+      action: "site_restored",
+      summary: `Restored “${restored.name}” from deletion`,
+      siteId: input.siteId,
+      actor,
+      targetType: "site",
+      targetId: input.siteId,
+    });
+    revalidatePath("/admin/sites");
+    return { ok: true, message: `“${restored.name}” is active again. Publish or republish its pages to serve them.` };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function purgeSiteAction(input: { siteId: string }): Promise<ActionState> {
+  try {
+    const actor = await requireRole("admin");
+    await requireStepUp(actor);
+    const site = await getSiteRow(input.siteId);
+    if (!site) throw new Error("Site not found.");
+    if (site.status !== "deleted") throw new Error("Suspend or delete the site before purging it.");
+    await purgeSite(input.siteId);
+    await recordAudit({
+      action: "site_purged",
+      summary: `Purged “${site.name}” and every row that belonged to it`,
+      actor,
+      targetType: "site",
+      targetId: input.siteId,
+    });
+    revalidatePath("/admin/sites");
+    return { ok: true, message: "Site purged. Its hostnames are free to reuse." };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Soft-deleted sites awaiting restore or purge, newest first. */
+export async function listDeletedSitesForAdmin() {
+  const { listDeletedSites } = await import("@/lib/sites");
+  return (await listDeletedSites()).sort((a, b) => (b.site.deletedAt?.getTime() ?? 0) - (a.site.deletedAt?.getTime() ?? 0));
 }
 
 export async function listAssignableStaff() {

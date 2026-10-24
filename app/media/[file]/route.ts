@@ -1,14 +1,12 @@
 import { and, eq } from "drizzle-orm";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { db, ensureDb } from "@/lib/db";
 import { mediaAssets } from "@/lib/db/schema";
-import { MEDIA_DIR } from "@/lib/media";
+import { getObject, storageBackend } from "@/lib/media/storage";
 
 /**
  * Media is addressed by content hash, so a URL is immutable: the same file
- * always has the same name. In production this route is replaced by the R2
- * public bucket; identifiers in documents stay identical.
+ * always has the same name. In R2 mode the bucket serves these URLs directly
+ * and this route is only a fallback for rows that predate the bucket.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ file: string }> }) {
   const { file } = await params;
@@ -25,18 +23,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
 
   if (!asset) return new Response("Not found", { status: 404 });
 
-  try {
-    const bytes = await readFile(path.join(MEDIA_DIR, asset.storageKey));
-    return new Response(new Uint8Array(bytes), {
-      headers: {
-        "Content-Type": asset.mimeType,
-        "Content-Length": String(bytes.length),
-        "Cache-Control": "public, max-age=31536000, immutable",
-        ETag: `"${asset.checksum.slice(0, 32)}"`,
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
-  } catch {
-    return new Response("Not found", { status: 404 });
-  }
+  const bytes = await getObject(asset.storageKey);
+  if (!bytes) return new Response("Not found", { status: 404 });
+
+  return new Response(new Uint8Array(bytes), {
+    headers: {
+      "Content-Type": asset.mimeType,
+      "Content-Length": String(bytes.length),
+      "Cache-Control": "public, max-age=31536000, immutable",
+      ETag: `"${asset.checksum.slice(0, 32)}"`,
+      "X-Content-Type-Options": "nosniff",
+      "X-Media-Backend": storageBackend(),
+    },
+  });
 }

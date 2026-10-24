@@ -1,4 +1,4 @@
-import { asc, desc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lte } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { staffInvites, users } from "@/lib/db/schema";
 
@@ -43,6 +43,12 @@ export type PendingInvite = {
 
 export async function listInvites(): Promise<PendingInvite[]> {
   await ensureDb();
+  // Expiry is decided by the clock, not by whichever job happened to run last:
+  // the list (and the accept form) flips stale pending rows on read.
+  await db
+    .update(staffInvites)
+    .set({ status: "expired", updatedAt: new Date() })
+    .where(and(eq(staffInvites.status, "pending"), lte(staffInvites.expiresAt, new Date())));
   const rows = await db
     .select({
       id: staffInvites.id,

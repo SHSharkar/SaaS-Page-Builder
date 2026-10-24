@@ -69,6 +69,7 @@ export function validateDocument(input: unknown): ValidationResult {
   }
 
   const content: BlockNode[] = [];
+  const seenIds = new Set<string>();
   for (const node of raw.content ?? []) {
     const type = typeof node?.type === "string" ? node.type : "";
     const definition = BLOCKS[type];
@@ -81,7 +82,18 @@ export function validateDocument(input: unknown): ValidationResult {
       errors.push(`"${definition.name}" has invalid fields: ${parsed.error.issues[0]?.message ?? "unknown"}`);
       continue;
     }
-    content.push({ type, props: parsed.data as BlockNode["props"] });
+    // The server owns node identity: a block saved without an id gets one here,
+    // so the editor can always key its layer tree. Duplicates are refused
+    // because two nodes sharing an id make selection and reordering ambiguous.
+    const props = { ...(parsed.data as Record<string, unknown>) };
+    const id = typeof props.id === "string" ? props.id.trim() : "";
+    if (id && seenIds.has(id)) {
+      errors.push(`"${definition.name}" repeats the id "${id}".`);
+      continue;
+    }
+    const resolvedId = id || globalThis.crypto.randomUUID();
+    seenIds.add(resolvedId);
+    content.push({ type, props: { ...props, id: resolvedId } as BlockNode["props"] });
   }
 
   const rootProps = z
