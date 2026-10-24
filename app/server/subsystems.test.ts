@@ -31,6 +31,7 @@ import {
   checkTlsDomainAllowed,
   isPrimaryPlatformHost,
   listSiteDomains,
+  verifyCustomDomain,
 } from "@/app/server/domains";
 import {
   connectDomainAction,
@@ -50,6 +51,7 @@ import {
   submitHtmlImportAction,
 } from "@/app/server/imports/actions";
 import { enqueueRunOnceJob, QUEUE_POLICY_MAP } from "@/app/server/jobs";
+import { JOB_KINDS } from "@/lib/enums";
 import { assertTransition, canTransition } from "@/app/server/lifecycle";
 import {
   checksumBytes,
@@ -80,6 +82,7 @@ import { serializeRealtimePayload } from "@/app/server/realtime/publish";
 import {
   resolveDurableScanShare,
   resolveExpiringShortLink,
+  SHORT_LINK_MISS_LIMIT,
 } from "@/app/server/short-links";
 import { createPreviewShortLinkAction } from "@/app/server/short-links/actions";
 import { signUpWorkspaceAction } from "@/app/server/signup/actions";
@@ -101,6 +104,7 @@ import { getTranslations } from "@/app/server/text";
 import {
   createStripeClient,
   verifyHmacWebhookSignature,
+  verifyStripeWebhookSignature,
 } from "@/app/server/webhooks";
 
 describe("app/server subsystems", () => {
@@ -220,7 +224,20 @@ describe("app/server subsystems", () => {
     const customHost = `promo-${crypto.randomUUID().slice(0, 6)}.example.com`;
     const dom = await connectDomainAction({ siteId, hostname: customHost });
     expect(await checkTlsDomainAllowed(customHost)).toBe(false);
-    await verifyDomainAction({ domainId: dom.domainId });
+    const unproven = await verifyDomainAction({ domainId: dom.domainId });
+    expect(unproven.verified).toBe(false);
+    expect(unproven.recordName).toBe(`_spb-verify.${customHost}`);
+    expect(await checkTlsDomainAllowed(customHost)).toBe(false);
+    const [pending] = (await listSiteDomains(ctx.account.id, siteId)).filter(
+      (row) => row.hostname === customHost,
+    );
+    const proven = await verifyCustomDomain({
+      accountId: ctx.account.id,
+      actorUserId: ctx.user.id,
+      domainId: dom.domainId,
+      lookupTxt: async () => [[pending?.verificationToken ?? ""]],
+    });
+    expect(proven.verified).toBe(true);
     expect(await checkTlsDomainAllowed(customHost)).toBe(true);
     expect((await listSiteDomains(ctx.account.id, siteId)).length).toBe(2);
 
@@ -270,6 +287,10 @@ describe("app/server subsystems", () => {
     const code = link.path.replace("/go/", "");
     const resolvedLink = await resolveExpiringShortLink(code, "127.0.0.1");
     expect(resolvedLink?.targetPath).toBe(`/s/${site?.slug}`);
+    for (let hit = 0; hit < SHORT_LINK_MISS_LIMIT + 1; hit += 1) {
+      expect(await resolveExpiringShortLink(code, "10.9.9.9")).not.toBeNull();
+    }
+    expect(await resolveExpiringShortLink(code, "127.0.0.1")).not.toBeNull();
 
     const scanResolved = await resolveDurableScanShare(site?.scanCode ?? "");
     expect(scanResolved?.siteId).toBe(siteId);
@@ -367,7 +388,7 @@ describe("app/server subsystems", () => {
     expect(canTransition("site", "active", "suspended")).toBe(true);
     expect(() => assertTransition("domain", "removed", "active")).toThrow();
 
-    expect(Object.keys(QUEUE_POLICY_MAP)).toHaveLength(8);
+    expect(Object.keys(QUEUE_POLICY_MAP)).toHaveLength(JOB_KINDS.length);
     const swept = await purgeExpiredKeepWindows();
     expect(swept.purgedSites).toBeGreaterThanOrEqual(0);
 
@@ -380,7 +401,7 @@ describe("app/server subsystems", () => {
     ).toContain("https://app.example/go/abc");
 
     const body = '{"id":"evt_1"}';
-    const sig = createHmac("sha256", getEnv().STRIPE_WEBHOOK_SECRET)
+    const sig = createHmac("sha256", getEnv().INTERNAL_TLS_CHECK_TOKEN)
       .update(body, "utf8")
       .digest("hex");
     expect(
@@ -388,6 +409,51 @@ describe("app/server subsystems", () => {
     ).toBe(true);
     expect(
       verifyHmacWebhookSignature({ rawBody: body, signatureHeader: "bad" }),
+    ).toBe(false);
+
+    const stripeSecret = getEnv().STRIPE_WEBHOOK_SECRET;
+    const timestamp = 1_800_000_000;
+    const stripeSig = createHmac("sha256", stripeSecret)
+      .update(`${timestamp}.${body}`, "utf8")
+      .digest("hex");
+    const header = `t=${timestamp},v1=${stripeSig}`;
+    expect(
+      verifyStripeWebhookSignature({
+        rawBody: body,
+        secret: stripeSecret,
+        signatureHeader: header,
+        nowSeconds: timestamp,
+      }),
+    ).toBe(true);
+    expect(
+      verifyStripeWebhookSignature({
+        rawBody: body,
+        secret: stripeSecret,
+        signatureHeader: header,
+        nowSeconds: timestamp + 3_600,
+      }),
+    ).toBe(false);
+    expect(
+      verifyStripeWebhookSignature({
+        rawBody: body,
+        secret: stripeSecret,
+        signatureHeader: `t=${timestamp},v1=deadbeef`,
+        nowSeconds: timestamp,
+      }),
+    ).toBe(false);
+    expect(
+      verifyStripeWebhookSignature({
+        rawBody: body,
+        secret: stripeSecret,
+        signatureHeader: null,
+      }),
+    ).toBe(false);
+    expect(
+      verifyStripeWebhookSignature({
+        rawBody: body,
+        secret: stripeSecret,
+        signatureHeader: "malformed",
+      }),
     ).toBe(false);
 
     const prob = problemResponse({

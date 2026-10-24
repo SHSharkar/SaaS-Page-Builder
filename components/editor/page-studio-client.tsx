@@ -1,11 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { publishPageAction, saveDraftAction } from "@/app/server/pages/actions";
+import {
+  publishPageAction,
+  saveDraftAction,
+  schedulePageAction,
+} from "@/app/server/pages/actions";
 import { DocumentRenderer } from "@/components/blocks/document-renderer";
 import {
   Badge,
   Button,
+  DatePicker,
+  Form,
   FormSelect,
   Input,
   Label,
@@ -15,6 +21,7 @@ import {
   TabsPanel,
   Text,
   Textarea,
+  TimePicker,
 } from "@/components/ui";
 import { useTranslations } from "@/hooks/use-translations";
 import type { BlockNode, PageDocument } from "@/lib/documents";
@@ -124,6 +131,30 @@ export function PageStudioClient({
         setLockVersion(saved.lockVersion);
         await publishPageAction({ pageId, siteId });
         setStatusMessage(t("studio.publishNow"));
+      } catch (err) {
+        setStatusMessage(
+          err instanceof Error ? err.message : t("feedback.errorTitle"),
+        );
+      }
+    });
+  }
+
+  function handleSchedule(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const date = String(data.get("scheduleDate") ?? "");
+    const time = String(data.get("scheduleTime") ?? "");
+    startTransition(async () => {
+      try {
+        await schedulePageAction({
+          pageId,
+          publishAt: date
+            ? new Date(`${date}T${time || "00:00"}:00`).toISOString()
+            : null,
+          siteId,
+          unpublishAt: null,
+        });
+        setStatusMessage(t("studio.scheduled"));
       } catch (err) {
         setStatusMessage(
           err instanceof Error ? err.message : t("feedback.errorTitle"),
@@ -245,6 +276,27 @@ export function PageStudioClient({
             </Button>
           </Stack>
         </Stack>
+      </Surface>
+
+      <Surface>
+        <Form onSubmit={handleSchedule}>
+          <Stack gap="sm">
+            <Text as="h2" variant="subheading">
+              {t("studio.scheduleHeading")}
+            </Text>
+            <Label htmlFor="studio-schedule-date">
+              {t("studio.scheduleDateLabel")}
+            </Label>
+            <DatePicker id="studio-schedule-date" name="scheduleDate" />
+            <Label htmlFor="studio-schedule-time">
+              {t("studio.scheduleTimeLabel")}
+            </Label>
+            <TimePicker id="studio-schedule-time" name="scheduleTime" />
+          </Stack>
+          <Button disabled={isPending} type="submit" variant="secondary">
+            {t("studio.scheduleSubmit")}
+          </Button>
+        </Form>
       </Surface>
 
       {statusMessage ? <LiveRegion>{statusMessage}</LiveRegion> : null}

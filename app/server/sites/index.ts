@@ -19,6 +19,8 @@ import {
 import { withAccount } from "@/app/server/db/with-account";
 import { recordAccountAudit } from "@/app/server/audit";
 import { assertTransition } from "@/app/server/lifecycle";
+import { isUniqueViolation } from "@/app/server/db/errors";
+import { invalidatePublicSiteCache } from "@/app/server/public-site";
 
 export function buildPlatformSubdomain(slug: string): string {
   return `${slug}.${getEnv().PLATFORM_DOMAIN}`;
@@ -81,7 +83,15 @@ export async function createAccountSite(input: {
         theme,
         createdBy: input.actorUserId,
       })
-      .returning();
+      .returning()
+      .catch((error: unknown) => {
+        if (isUniqueViolation(error)) {
+          throw new Error(
+            `The site address "${baseSlug}" is already taken; choose another name or slug`,
+          );
+        }
+        throw error;
+      });
     if (!created) {
       throw new Error("Failed to insert site");
     }
@@ -164,7 +174,7 @@ export async function transitionSiteStatus(input: {
   siteId: string;
   nextStatus: "active" | "suspended" | "deleted";
 }): Promise<SiteRow> {
-  return withAccount(input.accountId, async (tx) => {
+  const transitioned = await withAccount(input.accountId, async (tx) => {
     const [existing] = await tx
       .select()
       .from(sites)
@@ -196,4 +206,6 @@ export async function transitionSiteStatus(input: {
     });
     return updated;
   });
+  await invalidatePublicSiteCache(input.siteId);
+  return transitioned;
 }

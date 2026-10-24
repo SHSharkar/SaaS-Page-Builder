@@ -1,102 +1,110 @@
 # SaaS Page Builder - Project Foundation Report
 
+- Scope: development lifecycle, tooling, configuration, quality gates, containers, and deployment wiring.
+- Date: 24 October 2026. Revised after the architecture audit in `docs/audit-2026-10-24.md`.
+
 ## 1. Executive Summary
 
-This report documents the production foundation of **SaaS Page Builder** (`saas-page-builder`), engineered on **Bun `1.4.4`**, **Next.js 16 App Router (`standalone`)**, **React 19**, **Tailwind CSS 4**, **PostgreSQL 18 (Drizzle ORM + forced RLS + `pg-boss`)**, and **Valkey (`ioredis`)**.
+Single-repository Next.js 16 application on Bun `1.4.4` with three services: a standalone web server, a `pg-boss` worker, and a one-shot migration job. PostgreSQL 18 (Drizzle ORM, forced RLS) is the only relational store and Valkey the only cache. Quality enforcement is local: four Husky hooks, a 24-check gate, and a Vitest suite with an 80% coverage floor. There is no `.github` directory and no hosted pipeline.
 
-Every layer enforces defense-in-depth invariants statically in CI/pre-push (`scripts/verify-plan.ts`) and at runtime (`scripts/preflight.ts`, `withAccount`, `proxy.ts`, and `app/server/auth/guards.ts`).
+## 2. Repository Layout
 
----
-
-## 2. Directory & Boundary Architecture
-
-| Layer | Path | Responsibility & Enforced Boundary |
+| Layer | Path | Responsibility |
 | --- | --- | --- |
-| Public Surface | `app/(public)/` | Marketing, auth forms, `/my-data`, `/go/[code]`, `/scan/[segment]`, `/s/[siteSlug]/[[...path]]` |
-| Tenant Workspace | `app/(app)/` | Authenticated multi-site workspace guarded by `requireAccountPageCapability` |
-| Stealth Admin | `app/admin/` | Platform operator console reachable only via `ADMIN_PATH` rewrite in `proxy.ts` |
-| API & Webhooks | `app/api/`, `app/webhooks/` | Health probes (`/api/health`, `/api/health/ready`), Better Auth, OG SVG, R2 file stream, SSE realtime, Stripe & TLS webhooks |
-| Server Subsystems | `app/server/` | `import "server-only"` modules (`db`, `redis`, `auth`, `capabilities`, `crypto`, `privacy`, `accounts`, `sites`, `pages`, `globals`, `domains`, `media`, `imports`, `templates`, `short-links`, `jobs`, `sweeper`, `admin`) |
-| Pure Shared Library | `lib/` | Client-safe enums, formatters (`money.ts`, `dates.ts`, `byte-size.ts`), identifiers, crawler detector, and 35-block `registry/` |
-| Wrapped UI Primitives | `components/ui/` | Sole location permitted to render raw HTML interactive/layout elements |
-| App Shells & Studio | `components/app-shell/`, `components/blocks/`, `components/editor/` | Composed workspace/public/admin shells, document renderer, and visual block studio |
-| Localization | `messages/` | `en-GB.json` & `en-US.json` (100% key and placeholder parity) + 5 guest overlays |
-| Lifecycle & Gate | `scripts/` | Migrations, seeds, `pg-boss` worker, preflight, backup/erasure tools, and 16 `verify-*.ts` checks |
+| Public surface | `app/(public)/` | Marketing, auth, `/my-data`, `/go/[code]`, `/scan/[segment]`, `/s/[siteSlug]/[[...path]]` |
+| Workspace | `app/(app)/` | Signed-in multi-site workspace behind `requireAccountPageCapability` |
+| Platform console | `app/admin/` | 16 operator areas, reachable only through the `ADMIN_PATH` rewrite |
+| API & webhooks | `app/api/`, `app/webhooks/` | Health, auth, files, OG, realtime, TLS probe, Stripe and domain-TLS webhooks |
+| Server subsystems | `app/server/` | `accounts`, `admin`, `audit`, `auth`, `capabilities`, `crypto`, `db`, `domains`, `email`, `env`, `globals`, `imports`, `jobs`, `lifecycle`, `logger`, `media`, `network`, `overview`, `pages`, `platform-config`, `privacy`, `public-site`, `realtime`, `redis`, `short-links`, `sites`, `storage`, `sweeper`, `team`, `templates`, `text`, `test-support`, `webhooks` |
+| Shared library | `lib/` | Enums, documents, formatters, identifiers, crawler detection, request-header constants, `registry/` (35 blocks) |
+| UI primitives | `components/ui/` | The only place raw HTML interactive elements may appear |
+| Localization | `messages/` | `en-GB` + `en-US` (233 keys) and five guest overlays |
+| Lifecycle & gate | `scripts/` | Migrations, seeds, worker, healthcheck, restore, and every `verify-*` check |
 
-Boundary rules are enforced simultaneously by **ESLint (`eslint.config.mjs`)**, **Dependency Cruiser (`.dependency-cruiser.mjs`)**, and **`scripts/verify-client-boundary.ts`**.
+Boundary rules are enforced by ESLint, Dependency Cruiser, and `scripts/verify-client-boundary.ts` simultaneously.
 
----
+## 3. Database
 
-## 3. Database Schema & Forced Row-Level Security
+34 tables in `drizzle/0000_initial_schema.sql`; 16 tenant-scoped tables carry `account_id`, composite `(id, account_id)` uniqueness, composite tenant foreign keys, `ENABLE`/`FORCE ROW LEVEL SECURITY`, and the `account_isolation` policy bound to `current_setting('app.account_id')` and `current_setting('app.platform_bypass')`. `withAccount` sets both GUCs transaction-locally; `withPlatform` sets the bypass. Public reads go through SECURITY DEFINER functions (`resolve_public_page_snapshot`, `verify_active_tls_domain`, `resolve_short_link_by_hash`, `resolve_scan_share_site`, `superadmin_reveal_contact`). `scripts/lib/bare-database-allowlist.json` names the only modules allowed to import the bare client.
 
-### 3.1 Platform Tables (`16`)
+## 4. Verification Gate
 
-`users`, `sessions`, `auth_accounts`, `verifications`, `two_factors`, `plans`, `accounts`, `roles`, `permissions`, `role_permissions`, `platform_settings`, `component_definitions`, `platform_templates`, `erasure_logs`, `webhook_events`, `worker_heartbeats`.
+### Components
 
-### 3.2 Tenant-Scoped Tables (`16` - Forced RLS)
+- `scripts/verify-plan.ts` - the 24-step catalogue with `minTier` per step, `planGateSteps(tier)`, `describePlan(tier)`, and `changedFiles()` (merge-base against `origin/main` plus working tree and untracked files).
+- `scripts/verify-tier.ts` - `classifyVerifyTier(changedFiles, trigger, forced)`. `VERIFY_TRIGGER=manual` or an empty change set forces `full`; `VERIFY_TIER` overrides.
+- `scripts/verify-gate.ts` - executes the plan sequentially, writes `.verify-logs/latest.json`, appends a journal entry, and prints the recovery hint (`bun run verify:fix`) on failure.
+- `scripts/verify-log.ts` - the journal reader (`bun run verify:log`, `--limit N`, `--all`) over `.verify-logs/history.jsonl`.
 
-`account_memberships`, `account_invitations`, `subscriptions`, `sites`, `site_globals`, `pages`, `page_snapshots`, `page_revisions`, `site_domains`, `media_assets`, `media_variants`, `site_import_jobs`, `account_templates`, `short_links`, `audit_events`, `guest_contacts`.
+### Steps
 
-Every tenant-scoped table enforces:
+format, wording, shell, naming, typecheck, lint, lint-css, contrast, client-boundary, deps, authz, capabilities, roles, tenant-delete, queue-policies, message-catalog, migrations, migration-safety, rls, unused, audit, licenses, test-coverage, preflight.
 
-1. `account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE`
-2. Composite `(id, account_id)` unique constraint so child tables bind `(parent_id, account_id)` via composite foreign keys - making cross-account foreign-key attachment impossible at the PostgreSQL constraint layer.
-3. `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` with policy `account_isolation`:
-   ```sql
-   USING (
-     current_setting('app.platform_bypass', TRUE) = 'on'
-     OR (
-       current_setting('app.current_account_id', TRUE) <> ''
-       AND account_id = current_setting('app.current_account_id', TRUE)::uuid
-     )
-   )
-   ```
-4. Transaction-scoped GUCs (`SET LOCAL app.current_account_id` in `withAccount` and `SET LOCAL app.platform_bypass = 'on'` in `withPlatform`), plus narrow `SECURITY DEFINER` lookup functions (`spb_lookup_published_domain`, `spb_lookup_published_site`, `spb_resolve_short_link`) for unauthenticated public rendering.
+### Hooks
 
----
+- `pre-commit`: `gitleaks protect --staged --redact` when gitleaks is installed, then `lint-staged`.
+- `commit-msg`: Conventional Commits subject.
+- `post-merge`: reinstalls the lockfile and applies migrations when those files change.
+- `pre-push`: `exec bun scripts/verify-gate.ts`.
 
-## 4. Security, Privacy & Resilience Controls
+## 5. Testing
 
-- **Stealth Admin & CSP Nonce (`proxy.ts`)**: Generates per-request CSP nonces, sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy`, returns `404` on `/admin/*`, rewrites `ADMIN_PATH` to `/admin`, and routes verified custom domains directly to `/s/{siteSlug}`.
-- **Cryptographic Separation (`app/server/crypto`)**: Distinct 32-byte keys for `SETTINGS_ENCRYPTION_KEY`, `GUEST_CONTACT_KEY`, `GUEST_LOOKUP_KEY`, `BACKUP_ENCRYPTION_KEY`, and `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`. Privacy leak isolation is enforced by `app/server/privacy/leak.test.ts`.
-- **Circuit Breakers & SSRF Guard**: External calls wrap in `CircuitBreaker` (`app/server/breaker.ts`), and user-supplied URLs pass DNS + IP range inspection (`app/server/network/outbound-url.ts`).
-- **Durable Jobs (`pg-boss`)**: All 8 background queues (`JOB_KINDS`) configure explicit `retryLimit`, `retryDelay`, `retryBackoff: true`, and `expireInSeconds` (`verify:queue-policies`).
+Vitest 5 with two projects (`node`, `dom`), a global setup that creates and migrates the test database, `maxWorkers: 4`, and V8 coverage at 80% for statements, branches, functions, and lines. Playwright holds a single marketing/auth journey spec with axe-core accessibility checks in light, dark, and narrow viewports; it is a separate command and not part of the gate.
 
----
+The database-dependent suites (`subsystems`, `hardening`, `jobs`, `coverage-gaps`, `with-account`, `session`, `redis`) require PostgreSQL 18 and Valkey. `TEST_DATABASE_URL`/`TEST_REDIS_URL` override the defaults (`SPB_LOCAL_PG_*`, `SPB_LOCAL_VALKEY_*`). Forced RLS only applies to a role without `BYPASSRLS`, so the test role must not be a superuser.
 
-## 5. Verification Gate (`scripts/verify-plan.ts`)
+## 6. Custom Verify Scripts
 
-Running `bun run verify` executes all 24 gate steps and writes structured telemetry to `.verify-logs/latest.json`:
+Each `verify-*.ts` returns a `CheckResult` through `scripts/lib/check.ts`:
 
-1. `format` - Prettier formatting check across all tracked files
-2. `wording` - Blocks legacy brand strings and embedded-DB identifiers (`scripts/verify-wording.ts`)
-3. `shell` - Validates `.husky/*` and `scripts/*.sh` with `shellcheck -s sh` and `shfmt -d -i 2 -ci` (`scripts/verify-shell.ts`)
-4. `naming` - Enforces kebab-case file naming conventions (`scripts/verify-naming.ts`)
-5. `typecheck` - Strict TypeScript compiler check (`tsc --noEmit`)
-6. `lint` - ESLint (`--max-warnings 0`) including `house/no-source-comments`, `house/no-raw-tailwind-palette`, `no-console`, `complexity <= 15`, wrapped UI primitives, and `react/jsx-no-literals`
-7. `lint-css` - Stylelint check on `app/globals.css`
-8. `contrast` - WCAG 2.1 AA contrast ratio verification across `:root` and `.dark` token pairs (`scripts/verify-color-contrast.ts`)
-9. `client-boundary` - Verifies no client/shared file imports `app/server/**` (`scripts/verify-client-boundary.ts`)
-10. `deps` - Dependency Cruiser graph validation (`.dependency-cruiser.mjs`)
-11. `authz` - Verifies every `"use server"` file and private API route invokes capability/session guards (`scripts/verify-authz.ts`)
-12. `capabilities` - Verifies every capability is well-formed and mapped to roles (`scripts/verify-capabilities.ts`)
-13. `roles` - Verifies role hierarchy invariants (`owner` superset of `admin` -> `editor` -> `viewer`) (`scripts/verify-roles.ts`)
-14. `tenant-delete` - Verifies `accounts` cascade delete reaches all 16 tenant tables (`scripts/verify-tenant-delete.ts`)
-15. `queue-policies` - Verifies explicit retry/backoff/expiration policies for every `JOB_KINDS` queue (`scripts/verify-queue-policies.ts`)
-16. `message-catalog` - Verifies `en-GB` / `en-US` key + placeholder parity and 100% `t("...")` call coverage (`scripts/verify-message-catalog.ts`)
-17. `migrations` - Verifies Drizzle journal + SHA-256 SQL checksum integrity (`scripts/verify-migrations.ts`)
-18. `migration-safety` - Blocks unguarded destructive DDL in SQL migrations (`scripts/verify-migration-safety.ts`)
-19. `rls` - Verifies forced RLS, composite tenant FKs, and `bare-database-allowlist.json` (`scripts/verify-rls.ts`)
-20. `unused` - Knip dead-export / unused-dependency analysis (`knip.json`)
-21. `audit` - `bun audit` zero-vulnerability check (`scripts/verify-audit.ts`)
-22. `licenses` - Production dependency OSI/permissive license verification (`scripts/verify-licenses.ts`)
-23. `test-coverage` - Vitest unit + live PostgreSQL/Valkey integration suite (`>= 80%` lines, statements, functions, branches)
-24. `preflight` - Live PostgreSQL 18 forced-RLS catalog inspection + Valkey readiness (`scripts/preflight.ts`)
+`verify-migrations`, `verify-migration-safety`, `verify-rls` (forced RLS + bare-database allowlist), `verify-authz` (capability guards on actions, pages, and routes), `verify-capabilities`, `verify-roles`, `verify-naming`, `verify-tenant-delete`, `verify-queue-policies`, `verify-message-catalog`, `verify-color-contrast`, `verify-licenses`, `verify-audit`, `verify-wording`, `verify-shell`, `verify-client-boundary`, `preflight`.
 
----
+`scripts/verify-shell.ts` now refuses to pass silently: it fails with install instructions when `shellcheck` or `shfmt` is missing and otherwise reports each tool's real output.
 
-## 6. Hardened Container & Coolify Topology
+## 7. Database Tooling
 
-- **`Dockerfile`**: 3-stage `oven/bun:1.4.4-slim` build producing Next.js standalone runner executing as `USER bun` with built-in `/api/health` `HEALTHCHECK`.
-- **`Dockerfile.worker`**: Dedicated `oven/bun:1.4.4-slim` non-root worker & migration image (`USER bun`).
-- **`docker-compose.yml`**: Orchestrates `migrate` (`restart: "no"`), `web`, and `worker` with `service_completed_successfully` ordering, `read_only: true`, `tmpfs: ["/tmp"]`, `cap_drop: ["ALL"]`, and `security_opt: ["no-new-privileges:true"]`.
+`drizzle.config.ts` points drizzle-kit at `app/server/db/schema/index.ts` and outputs to `drizzle/`. `bun run db:migrate` applies migrations under the `react-server` condition. Checksums live in `drizzle/meta/_checksums.json` and are enforced by `verify:migrations`.
+
+Backup tooling:
+
+- `bun run db:restore --file <dump>` - decrypts (`bak1:` envelope, `BACKUP_ENCRYPTION_KEY`) unless `--plain`, applies the SQL through `psql`, then replays the erasure log so erased contacts stay erased. `--skip-erasure-replay` opts out.
+- `bun run backup:decrypt` - offline envelope decryption.
+- `bun run db:replay-erasure-log` - erasure replay without a restore.
+- `bun run db:purge-keep-window` - keep-window purge on demand.
+
+## 8. Local Development
+
+`scripts/local.sh {status|migrate|seed|verify|dev}` plus `doctor`. `package.json` exposes `dev`, `dev:all`, `worker:dev`, and `stripe:listen`. `bunfig.toml` preloads `scripts/lib/server-only-stub.ts` and `scripts/lib/development-env-preload.ts`.
+
+## 9. Environment and Secrets
+
+`.env.example` lists key names; `.env.production.example` shows placeholder shapes. Required runtime keys are validated by `app/server/env.ts` (Zod) and `scripts/preflight.ts`: `DATABASE_URL`, `REDIS_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `PRIMARY_DOMAIN`, `PLATFORM_DOMAIN`, `ADMIN_PATH`, `SETTINGS_ENCRYPTION_KEY`, `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`, `GUEST_LOOKUP_KEY`, `GUEST_CONTACT_KEY`, `BACKUP_ENCRYPTION_KEY`, `INTERNAL_TLS_CHECK_TOKEN`, SMTP settings, two R2 credential pairs, and Stripe keys. No secret enters a Docker build; the compose file fails fast on the three most critical values (`${VAR:?}`).
+
+## 10. Containers
+
+Both images build from `oven/bun:1.4.4-slim` and run as `USER bun`. `Dockerfile` is a multi-stage Next.js standalone build with an artifact assertion and a `/api/health` health check. `Dockerfile.worker` installs production dependencies, copies `app`, `lib`, `messages`, `drizzle`, and `scripts`, and runs `bun scripts/worker.ts`.
+
+`docker-compose.yml` defines `migrate` (`restart: "no"`), `web` (expose-only on 3000 with the `caddy_ingress_network: coolify` label), and `worker` (heartbeat health check). A shared `x-hardening` anchor applies `read_only`, `tmpfs: [/tmp]`, `cap_drop: ALL`, `no-new-privileges`, and 16 MB × 4 json-file logging to all three services; memory and PID limits are explicit per service (web 1536 MB / 768 PIDs, worker 1024 MB / 768 PIDs, migrate 512 MB / 336 PIDs). `init: true` and stop grace periods apply to the two long-running services.
+
+## 11. Deployment
+
+One Coolify resource. Caddy terminates TLS outside the repository. PostgreSQL and Valkey are external. `docs/deployment.md` holds the procedure; `scripts/preflight.ts` runs inside the gate and before a deploy.
+
+## 12. CI Posture
+
+No hosted pipeline. `next.config.ts` sets `typescript.ignoreBuildErrors: true` on purpose (the type check is a gate step and the Turbopack cache keeps the image build short), and `next.config.test.ts` pins that choice.
+
+## 13. AI Agent Tooling
+
+`.claude/` and `.agents/` hold the same architecture skill (mirrored, byte-identical). `AGENTS.md`, `CLAUDE.md`, and `.specify/memory/constitution.md` are the rulebooks, with the constitution taking precedence.
+
+## 14. Repository Hygiene
+
+`.gitignore` covers dependencies, build output, coverage, env files (examples kept), dumps, `.verify-logs/`, and `sbom.cdx.json`. `.prettierignore` excludes generated directories. `bun run sbom` writes a CycloneDX file at the root.
+
+## 15. Known Limits
+
+- The Playwright suite is one spec, not a full journey matrix.
+- `import.process` was removed from the queue catalogue: imports are analysed synchronously and applied through the review path, so a queue with no producer and no handler no longer exists. The same applies to `backup.snapshot`; backups are produced and restored by the `db:restore`/`backup:decrypt` CLIs.
+- Media purge deletes database rows; object cleanup in R2 for retired assets is still manual.
+- Self-service erasure is rate limited and audited but not yet gated behind an emailed confirmation link.

@@ -1,9 +1,12 @@
 import os from "node:os";
 import { workerHeartbeats } from "../app/server/db/schema";
 import { withPlatform } from "../app/server/db/with-account";
-import { createConfiguredPgBoss } from "../app/server/jobs";
+import {
+  createConfiguredPgBoss,
+  ensureScheduledJobs,
+} from "../app/server/jobs";
+import { JOB_HANDLERS, missingJobHandlers } from "../app/server/jobs/handlers";
 import { logger } from "../app/server/logger";
-import { purgeExpiredKeepWindows } from "../app/server/sweeper";
 import { JOB_KINDS } from "../lib/enums";
 import { isMainModule } from "./lib/check";
 
@@ -24,17 +27,30 @@ export async function recordHeartbeat(
 
 export async function startWorkerRuntime(): Promise<() => Promise<void>> {
   const workerId = `${os.hostname()}-${process.pid}`;
+  const unhandled = missingJobHandlers();
+  if (unhandled.length > 0) {
+    throw new Error(`No job handler registered for: ${unhandled.join(", ")}`);
+  }
+
   const boss = await createConfiguredPgBoss();
 
   for (const kind of JOB_KINDS) {
+    const handler = JOB_HANDLERS[kind];
     await boss.work(kind, async () => {
-      if (kind === "sweeper.daily") {
-        await purgeExpiredKeepWindows();
-      }
-      logger.info({ kind, workerId }, "worker.job_completed");
+      const outcome = await handler(new Date());
+      logger.info(
+        {
+          kind: outcome.kind,
+          handled: outcome.handled,
+          detail: outcome.detail,
+          workerId,
+        },
+        "worker.job_completed",
+      );
     });
   }
 
+  await ensureScheduledJobs(boss);
   await recordHeartbeat(workerId, true);
   const timer = setInterval(() => {
     void recordHeartbeat(workerId, true);

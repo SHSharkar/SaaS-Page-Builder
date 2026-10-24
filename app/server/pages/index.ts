@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import {
   DEFAULT_PAGE_SEO,
   emptyDocument,
@@ -12,6 +12,7 @@ import {
   documentAdminBlockAliases,
   validateDocument,
 } from "@/lib/registry";
+import type { PageStatus } from "@/lib/enums";
 import {
   pageVersions,
   pages,
@@ -19,9 +20,9 @@ import {
   type PageRow,
   type PageVersionRow,
 } from "@/app/server/db/schema";
-import { withAccount } from "@/app/server/db/with-account";
+import { withAccount, withPlatform } from "@/app/server/db/with-account";
 import { recordAccountAudit } from "@/app/server/audit";
-import { cacheDelKeys } from "@/app/server/redis/client";
+import { invalidatePublicSiteCache } from "@/app/server/public-site";
 
 export async function listSitePages(
   accountId: string,
@@ -169,6 +170,14 @@ export async function savePageDraft(input: {
       throw new Error("Optimistic lock conflict during draft update");
     }
 
+    await tx
+      .delete(trackingPlacements)
+      .where(
+        and(
+          eq(trackingPlacements.pageId, input.pageId),
+          eq(trackingPlacements.accountId, input.accountId),
+        ),
+      );
     const placements = collectTrackingPlacements(input.document);
     for (const p of placements) {
       await tx.insert(trackingPlacements).values({
@@ -197,7 +206,7 @@ export async function savePageDraft(input: {
 
 export async function publishSitePage(input: {
   accountId: string;
-  actorUserId: string;
+  actorUserId: string | null;
   siteId: string;
   pageId: string;
   note?: string;
@@ -269,7 +278,7 @@ export async function publishSitePage(input: {
     return createdVersion;
   });
 
-  await cacheDelKeys(`pub:site:${input.siteId}`);
+  await invalidatePublicSiteCache(input.siteId);
   return version;
 }
 
@@ -280,7 +289,7 @@ export async function rollbackPageToVersion(input: {
   pageId: string;
   versionId: string;
 }): Promise<PageVersionRow> {
-  return withAccount(input.accountId, async (tx) => {
+  const rolledBack = await withAccount(input.accountId, async (tx) => {
     const [target] = await tx
       .select()
       .from(pageVersions)
@@ -342,5 +351,118 @@ export async function rollbackPageToVersion(input: {
       summary: `Rolled back to version #${target.versionNumber} as #${nextNumber}`,
     });
     return rolled;
+  });
+  await invalidatePublicSiteCache(input.siteId);
+  return rolledBack;
+}
+
+export interface ScheduledPageChange {
+  readonly accountId: string;
+  readonly siteId: string;
+  readonly pageId: string;
+  readonly actorUserId: string | null;
+}
+
+async function duePages(
+  column: "scheduledPublishAt" | "scheduledUnpublishAt",
+  status: PageStatus,
+  now: Date,
+  limit: number,
+): Promise<ScheduledPageChange[]> {
+  const schedule = pages[column];
+  return withPlatform((tx) =>
+    tx
+      .select({
+        accountId: pages.accountId,
+        siteId: pages.siteId,
+        pageId: pages.id,
+        actorUserId: pages.updatedBy,
+      })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.status, status),
+          isNotNull(schedule),
+          lte(schedule, now),
+          isNull(pages.deletedAt),
+        ),
+      )
+      .limit(limit),
+  );
+}
+
+export async function publishDuePages(
+  now = new Date(),
+  limit = 50,
+): Promise<ScheduledPageChange[]> {
+  const due = await duePages("scheduledPublishAt", "draft", now, limit);
+  for (const page of due) {
+    await publishSitePage({
+      accountId: page.accountId,
+      actorUserId: page.actorUserId,
+      siteId: page.siteId,
+      pageId: page.pageId,
+      note: "Scheduled publish",
+    });
+    await withAccount(page.accountId, (tx) =>
+      tx
+        .update(pages)
+        .set({ scheduledPublishAt: null })
+        .where(eq(pages.id, page.pageId)),
+    );
+  }
+  return due;
+}
+
+export async function unpublishDuePages(
+  now = new Date(),
+  limit = 50,
+): Promise<ScheduledPageChange[]> {
+  const due = await duePages("scheduledUnpublishAt", "published", now, limit);
+  for (const page of due) {
+    await withAccount(page.accountId, async (tx) => {
+      await tx
+        .update(pages)
+        .set({
+          status: "draft",
+          publishedVersionId: null,
+          scheduledUnpublishAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(pages.id, page.pageId));
+      await recordAccountAudit(tx, {
+        accountId: page.accountId,
+        actorUserId: page.actorUserId,
+        action: "page.scheduled_unpublished",
+        targetType: "page",
+        targetId: page.pageId,
+        summary: "Unpublished page at its scheduled time",
+      });
+    });
+    await invalidatePublicSiteCache(page.siteId);
+  }
+  return due;
+}
+
+export async function schedulePagePublish(input: {
+  accountId: string;
+  siteId: string;
+  pageId: string;
+  publishAt: Date | null;
+  unpublishAt: Date | null;
+}): Promise<void> {
+  await withAccount(input.accountId, async (tx) => {
+    const [updated] = await tx
+      .update(pages)
+      .set({
+        scheduledPublishAt: input.publishAt,
+        scheduledUnpublishAt: input.unpublishAt,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(pages.id, input.pageId), eq(pages.siteId, input.siteId)))
+      .returning({ id: pages.id });
+    if (!updated) {
+      throw new Error("Page not found");
+    }
   });
 }

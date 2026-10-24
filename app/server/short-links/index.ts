@@ -50,16 +50,24 @@ export async function issueShortLink(input: {
   };
 }
 
+export const SHORT_LINK_MISS_LIMIT = 30;
+export const SHORT_LINK_MISS_WINDOW_SECONDS = 300;
+
+async function chargeShortLinkMiss(clientIp: string): Promise<boolean> {
+  const budget = await consumeSlidingBudget(
+    `shortlink:miss:${clientIp}`,
+    SHORT_LINK_MISS_LIMIT,
+    SHORT_LINK_MISS_WINDOW_SECONDS,
+  );
+  return budget.allowed;
+}
+
 export async function resolveExpiringShortLink(
   code: string,
   clientIp: string,
 ): Promise<{ targetPath: string; kind: string } | null> {
-  const budget = await consumeSlidingBudget(
-    `shortlink:miss:${clientIp}`,
-    30,
-    300,
-  );
-  if (!budget.allowed || !isValidShortCode(code)) {
+  if (!isValidShortCode(code)) {
+    await chargeShortLinkMiss(clientIp);
     return null;
   }
   const codeHash = computeLookupHash("short-link", code);
@@ -73,9 +81,11 @@ export async function resolveExpiringShortLink(
 
   const row = res.rows[0];
   if (!row) {
+    await chargeShortLinkMiss(clientIp);
     return null;
   }
   if (new Date(row.expires_at).getTime() <= Date.now()) {
+    await chargeShortLinkMiss(clientIp);
     return null;
   }
   return {

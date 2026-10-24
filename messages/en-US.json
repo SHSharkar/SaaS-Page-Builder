@@ -151,13 +151,18 @@
     "pageSlugLabel": "URL path"
   },
   "studio": {
-    "title": "Block Studio",
     "blockLibrary": "Add block",
     "emptyCanvas": "No blocks on this page yet. Choose a block from the catalog above.",
     "inspector": "Block content",
-    "saveRevision": "Save draft",
+    "previewDraft": "Preview",
     "publishNow": "Publish snapshot",
-    "previewDraft": "Preview"
+    "saveRevision": "Save draft",
+    "scheduleDateLabel": "Publish date",
+    "scheduleHeading": "Schedule publication",
+    "scheduleSubmit": "Schedule",
+    "scheduleTimeLabel": "Publication time",
+    "scheduled": "Publication scheduled",
+    "title": "Block Studio"
   },
   "domains": {
     "heading": "Custom domains",

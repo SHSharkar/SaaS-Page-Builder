@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { VerifyTier } from "./verify-tier";
 
 export interface GateStep {
@@ -67,4 +68,40 @@ export const GATE_STEPS: readonly GateStep[] = [
 export function planGateSteps(tier: VerifyTier): GateStep[] {
   const rank = TIER_RANK[tier];
   return GATE_STEPS.filter((step) => TIER_RANK[step.minTier] <= rank);
+}
+
+export function describePlan(tier: VerifyTier): string {
+  const steps = planGateSteps(tier);
+  return `${steps.length} checks at tier "${tier}": ${steps
+    .map((step) => step.id)
+    .join(", ")}`;
+}
+
+function gitLines(args: readonly string[], cwd: string): string[] {
+  const res = spawnSync("git", [...args], { cwd, encoding: "utf8" });
+  if (res.status !== 0 || !res.stdout) {
+    return [];
+  }
+  return res.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function mergeBase(cwd: string): string | null {
+  const [base] = gitLines(["merge-base", "HEAD", "origin/main"], cwd);
+  return base ?? null;
+}
+
+export function changedFiles(cwd = process.cwd()): string[] {
+  const base = mergeBase(cwd);
+  const committed = base
+    ? gitLines(["diff", "--name-only", base, "HEAD"], cwd)
+    : gitLines(["diff", "--name-only", "HEAD~1", "HEAD"], cwd);
+  const workingTree = gitLines(["diff", "--name-only", "HEAD"], cwd);
+  const untracked = gitLines(
+    ["ls-files", "--others", "--exclude-standard"],
+    cwd,
+  );
+  return [...new Set([...committed, ...workingTree, ...untracked])].sort();
 }

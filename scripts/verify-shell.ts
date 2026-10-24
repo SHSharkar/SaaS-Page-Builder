@@ -8,7 +8,14 @@ import {
   runCliCheck,
 } from "./lib/check";
 
-function collectShellTargets(rootDir: string): string[] {
+const REQUIRED_TOOLS = ["shellcheck", "shfmt"] as const;
+
+interface ToolRun {
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+export function collectShellTargets(rootDir: string): string[] {
   const targets: string[] = [];
   const huskyDir = path.join(rootDir, ".husky");
   if (fs.existsSync(huskyDir)) {
@@ -29,32 +36,56 @@ function collectShellTargets(rootDir: string): string[] {
   return targets.sort();
 }
 
+function missingTool(tool: string): boolean {
+  const probe = spawnSync(tool, ["--version"], { encoding: "utf8" });
+  return Boolean(probe.error) || probe.status === null;
+}
+
+function runTool(
+  tool: string,
+  args: readonly string[],
+  rootDir: string,
+): ToolRun {
+  const result = spawnSync(tool, [...args], { cwd: rootDir, encoding: "utf8" });
+  if (result.error) {
+    return {
+      ok: false,
+      detail: `${tool} could not run: ${result.error.message}`,
+    };
+  }
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (result.status === 0) {
+    return { ok: true, detail: `${tool} clean` };
+  }
+  return {
+    ok: false,
+    detail: output.length > 0 ? output : `${tool} exited ${result.status}`,
+  };
+}
+
 export function verifyShell(rootDir = process.cwd()): CheckResult {
   const targets = collectShellTargets(rootDir);
   if (targets.length === 0) {
     return passCheck("verify:shell", "No shell scripts present");
   }
-  const failures: string[] = [];
 
-  const sc = spawnSync("shellcheck", targets, {
-    cwd: rootDir,
-    encoding: "utf8",
-  });
-  if (sc.status !== 0) {
-    failures.push(
-      `shellcheck failed:\n${sc.stdout ?? ""}${sc.stderr ?? ""}`.trim(),
+  const absent = REQUIRED_TOOLS.filter((tool) => missingTool(tool));
+  if (absent.length > 0) {
+    return failCheck(
+      "verify:shell",
+      "Shell linting tools are not installed",
+      absent.map(
+        (tool) =>
+          `${tool} is required: install shellcheck and shfmt (https://github.com/koalaman/shellcheck, https://github.com/mvdan/sh)`,
+      ),
     );
   }
 
-  const sf = spawnSync("shfmt", ["-d", "-i", "2", "-ci", ...targets], {
-    cwd: rootDir,
-    encoding: "utf8",
-  });
-  if (sf.status !== 0) {
-    failures.push(
-      `shfmt diff failed:\n${sf.stdout ?? ""}${sf.stderr ?? ""}`.trim(),
-    );
-  }
+  const runs = [
+    runTool("shellcheck", targets, rootDir),
+    runTool("shfmt", ["-d", "-i", "2", "-ci", ...targets], rootDir),
+  ];
+  const failures = runs.filter((run) => !run.ok).map((run) => run.detail);
 
   return failures.length === 0
     ? passCheck(

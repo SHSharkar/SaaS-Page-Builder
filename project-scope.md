@@ -1,51 +1,87 @@
 # SaaS Page Builder - Project Scope
 
-## 1. Product Vision & Multi-Tenant SaaS Model
+- Scope: what the product is, how it is built, and how it runs, grounded in the repository as it stands on 24 October 2026.
+- Companion: `project-foundation-report.md` (tooling and file-level detail) and `docs/audit-2026-10-24.md` (the review that produced this revision).
 
-**SaaS Page Builder** (`saas-page-builder`) is a multi-tenant B2B SaaS visual page builder, custom-domain publishing engine, and conversion link platform engineered for agencies, product teams, and multi-brand operators.
+## 1. Product Definition
 
-- **Tenancy unit**: Every customer workspace is an `accounts` row owning its sites, pages, immutable snapshots, global navigation/footer/SEO configs, custom domains, media assets, site import jobs, workspace templates, short links, audit events, and encrypted guest contacts.
-- **Database-enforced tenant isolation**: PostgreSQL 18 Row-Level Security (`ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY`) with composite `(id, account_id)` foreign keys guarantees zero cross-tenant reads or writes even under application query bugs.
-- **Three strict surface boundaries**:
-  1. `app/(public)/` - Marketing pages, authentication (`sign-in`, `sign-up`, `two-factor`, `forgot-password`, `reset-password`, `accept-invitation`, `signed-out`), GDPR self-service (`/my-data`), short-link & QR crawler shield (`/go/[code]`, `/scan/[segment]`), and immutable snapshot rendering (`/s/[siteSlug]/[[...path]]` plus custom-domain host routing via `proxy.ts`).
-  2. `app/(app)/` - Authenticated workspace shell (`dashboard`, `sites`, `sites/[siteId]/*`, visual Puck-compatible block studio, `templates`, `domains`, `media`, `imports`, `analytics`, `team`, `export`, `settings`).
-  3. `app/admin/` - Stealth platform operator console mounted exclusively at `ADMIN_PATH` (`proxy.ts` rewrites `ADMIN_PATH` -> `/admin` and returns `404` for direct `/admin` probes) with 16 operational tabs (`overview`, `accounts`, `sites`, `domains`, `templates`, `components`, `users`, `roles`, `imports`, `media`, `short-links`, `audit`, `settings`, `operations`, `backups`, `privacy`).
+SaaS Page Builder (`saas-page-builder`) is a multi-tenant B2B SaaS visual page builder, publishing engine, and conversion link platform for agencies, product teams, and multi-brand operators.
 
-## 2. Core Functional Capabilities
+- **Tenancy unit**: every workspace is an `accounts` row that owns its sites, pages, immutable page versions, site globals, custom domains, media assets, import jobs, workspace templates, short links, audit events, and encrypted guest contacts.
+- **Database-enforced isolation**: PostgreSQL 18 forced Row-Level Security with composite `(id, account_id)` keys and composite `(parent_id, account_id)` foreign keys, so a query bug cannot cross tenants.
+- **Three surfaces**: `app/(public)/` (marketing, auth, `/my-data`, `/go/[code]`, `/scan/[segment]`, `/s/[siteSlug]/[[...path]]`), `app/(app)/` (signed-in workspace), and `app/admin/` (platform console reachable only through `ADMIN_PATH`).
 
-1. **Multi-Site Workspace & Visual Block Studio**
-   - Create and manage multiple sites per workspace (`sites`), governed by subscription tier (`plans`).
-   - Author draft `PageDocument` trees across 35 strongly typed blocks organized into 7 waves (`layout`, `hero`, `content`, `conversion`, `media`, `navigation`, `advanced`).
-   - Publish immutable `page_snapshots` and atomically switch or roll back `sites` / `pages` pointers without mutating historical snapshots.
-   - Manage site-wide globals (`site_globals` for header navigation, footer links, announcement bar, and default SEO metadata).
+## 2. Route Groups
 
-2. **Custom Domains, TLS Verification & Host Routing**
-   - Attach apex or subdomain hostnames (`site_domains`) with generated DNS TXT verification tokens (`_spb-verify.<hostname>`).
-   - Verify DNS ownership and track TLS provisioning states (`pending_dns`, `verified`, `provisioning_tls`, `active`, `failed`), guarded by `/api/internal/tls-check` and `/webhooks/domain-tls`.
-   - SSRF-safe outbound URL validation (`app/server/network/outbound-url.ts`) blocks loopback, RFC1918, CGNAT, link-local, and cloud metadata IPs on all remote fetches and site imports.
+1. `app/(public)/` - marketing (`/`, `features`, `pricing`, `faq`, `privacy`, `terms`), authentication (`sign-in`, `sign-in/two-factor`, `sign-up`, `forgot-password`, `reset-password`, `accept-invitation`, `signed-out`), GDPR self-service (`my-data`), the short-link surfaces (`go/[code]`, `scan/[segment]`), and the published-site renderer (`s/[siteSlug]/[[...path]]`, which also serves custom-domain hosts rewritten by `proxy.ts` to `/s/_custom`).
+2. `app/(app)/` - dashboard, `sites`, `sites/[siteId]` (overview, pages, editor, preview, globals, domains, media, imports, settings), `sites/new`, `templates`, `domains`, `media`, `imports`, `analytics`, `team`, `export`, `settings`.
+3. `app/admin/` - 16 operator areas plus an overview: accounts, audit, backups, components, domains, imports, media, operations, privacy, roles, settings, short-links, sites, templates, users. `proxy.ts` rewrites `ADMIN_PATH` to `/admin` and answers `404` for direct `/admin` probes.
+4. `app/api/` - `auth/[...all]`, `files/[id]`, `health`, `health/ready`, `internal/tls-check`, `og`, `realtime`, `realtime/platform`.
+5. `app/webhooks/` - `stripe` (Stripe `t=`/`v1=` signature scheme with a 300-second tolerance) and `domain-tls` (internal HMAC).
 
-3. **Templates, Media Library & Site Imports**
-   - Curate platform-wide starter templates (`platform_templates`) and promote workspace layouts (`account_templates`).
-   - Upload and track media assets (`media_assets` + `media_variants`) backed by Cloudflare R2 presigned/object storage (`app/server/storage/r2.ts`) and served via `/api/files/[id]`.
-   - Queue asynchronous site HTML imports (`site_import_jobs`) processed by `pg-boss` workers (`site.import`).
+## 3. Core Capabilities
 
-4. **Short Links, QR Codes & Crawler Shield**
-   - Issue 22-character opaque short links (`short_links`) for published pages and campaigns (`/go/[code]` and `/scan/[segment]`).
-   - Detect link-preview crawlers (`Slackbot`, `WhatsApp`, `Discordbot`, `Twitterbot`, `facebookexternalhit`, etc.) via `lib/crawler-agents.ts` and return static preview HTML with `Referrer-Policy: no-referrer` so one-time or tracked tokens are never burned by chat unfurlers.
+### Workspace, sites, and the block studio
 
-5. **Team RBAC, Capabilities & Audit Trail**
-   - Workspace roles (`owner`, `admin`, `editor`, `viewer`) and platform roles (`superadmin`, `support`) map deterministically to granular capabilities (`app/server/capabilities/index.ts`).
-   - Every state-changing Server Action enforces `requireAccountCapability` or `requirePlatformCapability` and appends an immutable `audit_events` record.
+- Multiple sites per workspace; each site owns pages, navigation/footer/defaults rows in `site_contents`, domains, media, imports, and templates.
+- 35 typed blocks in `lib/registry/blocks.ts`, grouped into five catalogue groups (`site-frame`, `conversion`, `money`, `content`, `utility`) and five waves, with a validation pass before any draft is stored.
+- Publishing writes an immutable `page_versions` row and repoints `pages.published_version_id`; rollback appends a new version instead of mutating history.
+- Draft saves use optimistic locking (`lock_version`) and replace the page's `tracking_placements` rows in the same transaction.
 
-6. **GDPR Privacy, Encrypted Contacts & Keep-Window Lifecycle**
-   - Guest contact details (`guest_contacts`) are encrypted at rest with AES-256-GCM (`GUEST_CONTACT_KEY`) and looked up only via HMAC-SHA256 (`GUEST_LOOKUP_KEY`).
-   - Self-service erasure (`/my-data`) and operator erasure purge ciphertext rows and record an `erasure_logs` tombstone replayed automatically after backup restores (`scripts/replay-erasure-log.ts`).
-   - Workspace and site deletions enter a configurable soft-delete keep-window (`purge_after_at`) before irreversible physical cascade deletion by `sweeper.daily` (`app/server/sweeper/index.ts`).
+### Custom domains
 
-## 3. Non-Functional & Operational Requirements
+- `site_domains` rows start `pending` with a `verificationToken`; the TXT record lives at `_spb-verify.<hostname>`.
+- Verification is real: `verifyCustomDomain` transitions `pending -> verifying`, resolves the TXT record, and only then moves the row to `active` (certificate state `pending`) or `failed`. A workspace cannot claim a hostname it does not control, and the unique hostname index prevents two workspaces from claiming the same one.
+- `verify_active_tls_domain()` gates `GET /api/internal/tls-check`, so only active, non-removed domains reach TLS provisioning.
 
-- **Strict Data Stores**: PostgreSQL 18 + Valkey (`ioredis`) only; zero embedded databases or in-memory fallbacks.
-- **Realtime Invalidation**: PostgreSQL `LISTEN` / `NOTIFY` bridged to Server-Sent Events (`/api/realtime` and `/api/realtime/platform`) with `ClientRealtimeListener` triggering `router.refresh()`.
-- **Localization**: Full `en-GB` (canonical) and `en-US` message catalog parity (`verify:message-catalog`) plus guest locale overlays (`de`, `en-NG`, `es`, `fr`, `nl`), with zero hardcoded JSX strings (`react/jsx-no-literals`).
-- **Accessibility**: WCAG 2.1 AA contrast verified statically on `:root` and `.dark` tokens (`verify:contrast`) and dynamically via Playwright + `@axe-core/playwright`.
-- **Quality Gate**: 24-step verification plan (`scripts/verify-plan.ts`), 80% minimum Vitest coverage across lines, statements, functions, and branches, strict ESLint house rules (`house/no-source-comments`, `no-console`, `complexity <= 15`), Stylelint, `.dependency-cruiser.mjs`, `knip`, `gitleaks`, and 4 POSIX `.husky/` hooks.
+### Media, imports, templates, short links
+
+- Uploads are presigned through Cloudflare R2 (`app/server/storage/r2.ts`), recorded in `media_assets`, deduplicated per site by checksum, reference-checked before retirement, and purged after a 30-day retention window by `media.orphan-sweep`.
+- HTML imports are parsed with cheerio into reviewable segments, then applied through the reviewed-import path; import jobs carry their status through the `import` lifecycle table.
+- Platform templates are curated by operators; workspace templates are cloned documents with regenerated block ids.
+- Short links are 22-character opaque codes stored only as HMAC hashes, expire per kind (`invitation` 7 days, `preview` 1 hour, `export`/`password_reset` 30 minutes, `my_data` 1 hour), and are resolved through `resolve_short_link_by_hash()`. `/go` answers crawlers with an empty `200` so chat unfurlers never burn a link.
+
+### Authorization and audit
+
+- Roles: `owner` = `admin` (all 20 account capabilities) > `editor` > `viewer`; platform roles are `superadmin`, `support`, `auditor`, `none` across 12 platform capabilities.
+- Every `"use server"` mutation calls a capability guard (`requireAccountCapability`, `requirePlatformCapability`) or a public rate limit (`requirePublicActionRateLimit`), and every state change writes an `account_audit_logs` or `platform_audit_logs` row inside the same transaction.
+
+### Privacy
+
+- Guest contacts are sealed with AES-256-GCM (`GUEST_CONTACT_KEY`) and looked up only by HMAC-SHA256 (`GUEST_LOOKUP_KEY`). Only `app/server/privacy` (and the SECURITY DEFINER reveal function) touch the ciphertext.
+- `/my-data` erasure deletes by lookup hash and writes an immutable `erasure_logs` tombstone; the `privacy.erasure` job replays that log so a restored backup cannot resurrect erased contacts.
+- Self-service erasure is rate limited by the proxy-derived client IP, not by a client-supplied key.
+
+## 4. Background Work
+
+`pg-boss` runs in the `pgboss` schema of the same database. `scripts/worker.ts` registers one real handler per queue and refuses to start when a declared queue has no handler:
+
+| Queue | Cadence | Work |
+| --- | --- | --- |
+| `page.scheduled-publish` | every minute | Publishes drafts whose `scheduled_publish_at` has passed |
+| `page.scheduled-unpublish` | every minute | Returns published pages to draft at `scheduled_unpublish_at` |
+| `domain.verify` | every 15 minutes | Re-checks `pending`/`verifying`/`failed` custom domains over DNS |
+| `privacy.erasure` | daily 02:00 | Replays the erasure log against stored contacts |
+| `media.orphan-sweep` | daily 02:30 | Purges retired media rows past the retention window |
+| `sweeper.daily` | daily 03:00 | Purges expired keep-windows, short links, and auth sessions |
+
+Every queue carries an explicit retry limit, backoff, expiry, retention window, and `.dlq` dead-letter queue, pinned by `verify:queue-policies`. The worker writes `worker_heartbeats` every 15 seconds; `scripts/worker-healthcheck.ts` fails the container health check when that heartbeat is stale or the worker stopped claiming work.
+
+## 5. Realtime
+
+`publishAccountChange()` issues `pg_notify` on `account_changed` with a topic and ids only. `app/server/realtime/listener.ts` multiplexes one PostgreSQL `LISTEN` connection into subscriber callbacks, and `hooks/use-realtime-refresh.ts` refreshes the route in the browser. Server actions never call `revalidatePath`.
+
+## 6. Non-Functional Requirements
+
+- **Data stores**: PostgreSQL 18 and Valkey only; no embedded database and no in-memory fallback.
+- **Published-page cache**: `resolvePublishedPage` caches resolved snapshots in Valkey for 120 seconds under `pub:page:<host-or-slug>:<path>` and registers each key in `pub:index:<siteId>`; publishing, rollback, global publishing, and site status changes drop that index so readers never see a stale site.
+- **Localization**: `en-GB` canonical plus `en-US` parity (233 keys, checked by `verify:message-catalog`) and guest overlays `de`, `en-NG`, `es`, `fr`, `nl`. No hardcoded JSX strings (`react/jsx-no-literals`).
+- **Accessibility**: WCAG 2.1 AA contrast enforced statically on `:root`/`.dark` tokens (`verify:contrast`) and dynamically through Playwright + axe-core.
+- **Quality gate**: 24 checks in `scripts/verify-plan.ts`, executed by `scripts/verify-gate.ts`, journaled to `.verify-logs/history.jsonl`, with 80% Vitest coverage on all four metrics.
+
+## 7. Repository Facts
+
+- Stack: Bun `1.4.4`, Next.js 16 App Router (`output: "standalone"`), React 19, strict TypeScript, Drizzle ORM, `pg-boss`, `ioredis`, Better Auth, Tailwind CSS 4, Zod 4.
+- 34 tables in one migration (`drizzle/0000_initial_schema.sql`), 16 of them tenant-scoped with forced RLS.
+- Quality gates run locally through four Husky hooks (`pre-commit`, `commit-msg`, `post-merge`, `pre-push`); there is no hosted CI.
+- Deployment is a three-service hardened Compose stack (`migrate`, `web`, `worker`) behind Coolify's Caddy; see `docs/deployment.md`.
