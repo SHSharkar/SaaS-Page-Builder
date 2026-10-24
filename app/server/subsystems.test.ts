@@ -82,6 +82,7 @@ import { serializeRealtimePayload } from "@/app/server/realtime/publish";
 import {
   resolveDurableScanShare,
   resolveExpiringShortLink,
+  SHORT_LINK_MISS_LIMIT,
 } from "@/app/server/short-links";
 import { createPreviewShortLinkAction } from "@/app/server/short-links/actions";
 import { signUpWorkspaceAction } from "@/app/server/signup/actions";
@@ -286,6 +287,10 @@ describe("app/server subsystems", () => {
     const code = link.path.replace("/go/", "");
     const resolvedLink = await resolveExpiringShortLink(code, "127.0.0.1");
     expect(resolvedLink?.targetPath).toBe(`/s/${site?.slug}`);
+    for (let hit = 0; hit < SHORT_LINK_MISS_LIMIT + 1; hit += 1) {
+      expect(await resolveExpiringShortLink(code, "10.9.9.9")).not.toBeNull();
+    }
+    expect(await resolveExpiringShortLink(code, "127.0.0.1")).not.toBeNull();
 
     const scanResolved = await resolveDurableScanShare(site?.scanCode ?? "");
     expect(scanResolved?.siteId).toBe(siteId);
