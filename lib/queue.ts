@@ -1,0 +1,210 @@
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { db, ensureDb } from "@/lib/db";
+import { jobs, roles, sessions, staffInvites, pages, siteContents, users } from "@/lib/db/schema";
+import type { Actor } from "@/lib/auth/session";
+import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
+import { publishPage, unpublishPage, pruneVersions } from "@/lib/pages";
+import { verifyDomain } from "@/lib/domains";
+import { cacheClear } from "@/lib/cache";
+
+export const JOB_KINDS = [
+  "page.publish.scheduled",
+  "page.unpublish.scheduled",
+  "invite.sweep",
+  "version.prune",
+  "media.orphan-sweep",
+  "domain.verify",
+  "session.sweep",
+  "sitemap.refresh",
+  "cleanup.daily",
+  "site.purge",
+] as const;
+
+export type JobKind = (typeof JOB_KINDS)[number];
+
+export async function enqueue(
+  kind: JobKind,
+  payload: Record<string, unknown> = {},
+  options: { runAt?: Date; dedupeKey?: string; maxAttempts?: number } = {},
+): Promise<void> {
+  await ensureDb();
+  await db
+    .insert(jobs)
+    .values({
+      kind,
+      payload,
+      runAt: options.runAt ?? new Date(),
+      dedupeKey: options.dedupeKey ?? null,
+      maxAttempts: options.maxAttempts ?? 5,
+    })
+    .onConflictDoNothing();
+}
+
+export async function getSystemActor(): Promise<Actor | null> {
+  await ensureDb();
+
+  const [row] = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(and(eq(users.banned, false), gte(roles.rank, 100)))
+    .orderBy(desc(roles.rank))
+    .limit(1);
+  if (!row) return null;
+  const [session] = await db.select().from(sessions).where(eq(sessions.userId, row.user.id)).limit(1);
+  return {
+    user: row.user,
+    session:
+      session ?? {
+        id: "00000000-0000-0000-0000-000000000000",
+        token: "system",
+        userId: row.user.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        ipAddress: null,
+        userAgent: "queue",
+        stepUpUntil: new Date(Date.now() + 60_000),
+        impersonatedBy: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    roles: await rolesForUser(row.user.id),
+    permissions: new Set(await permissionKeysForUser(row.user.id)),
+    stepUpValid: true,
+  };
+}
+
+async function handle(jobKind: string, payload: Record<string, unknown>): Promise<void> {
+  const actor = await getSystemActor();
+  switch (jobKind) {
+    case "page.publish.scheduled": {
+      if (!actor) throw new Error("No active admin to act as.");
+      await publishPage(String(payload.siteId), String(payload.pageId), actor, "manual");
+      await db
+        .update(pages)
+        .set({ scheduledPublishAt: null })
+        .where(eq(pages.id, String(payload.pageId)));
+      break;
+    }
+    case "page.unpublish.scheduled": {
+      if (!actor) throw new Error("No active admin to act as.");
+      await unpublishPage(String(payload.siteId), String(payload.pageId), actor);
+      await db
+        .update(pages)
+        .set({ scheduledUnpublishAt: null })
+        .where(eq(pages.id, String(payload.pageId)));
+      break;
+    }
+    case "invite.sweep": {
+      await db
+        .update(staffInvites)
+        .set({ status: "expired", updatedAt: new Date() })
+        .where(and(eq(staffInvites.status, "pending"), lte(staffInvites.expiresAt, new Date())));
+      break;
+    }
+    case "version.prune": {
+      const pageId = payload.pageId ? String(payload.pageId) : null;
+      const rows = pageId
+        ? await db.select({ id: pages.id }).from(pages).where(eq(pages.id, pageId))
+        : await db.select({ id: pages.id }).from(pages);
+      for (const row of rows) await pruneVersions(row.id);
+      break;
+    }
+    case "media.orphan-sweep": {
+
+      break;
+    }
+    case "domain.verify": {
+      await verifyDomain(String(payload.domainId), actor);
+      break;
+    }
+    case "session.sweep": {
+      const { sweepSessions } = await import("@/lib/auth/session");
+      await sweepSessions();
+      break;
+    }
+    case "sitemap.refresh": {
+      cacheClear();
+      break;
+    }
+    case "cleanup.daily": {
+      const { runDailyCleanup } = await import("@/lib/retention");
+      await runDailyCleanup(actor);
+      break;
+    }
+    case "site.purge": {
+      const { purgeSite, getSiteRow } = await import("@/lib/sites");
+      const siteId = String(payload.siteId);
+      const site = await getSiteRow(siteId);
+
+      if (!site) break;
+      if (site.status !== "deleted") break;
+      await purgeSite(siteId);
+      break;
+    }
+    default:
+      throw new Error(`Unknown job kind: ${jobKind}`);
+  }
+}
+
+export async function runDueJobs(limit = 10): Promise<{ processed: number; failed: number }> {
+  await ensureDb();
+  const due = await db
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.status, "queued"), lte(jobs.runAt, new Date())))
+    .limit(limit);
+
+  let processed = 0;
+  let failed = 0;
+
+  for (const job of due) {
+    await db.update(jobs).set({ status: "running", updatedAt: new Date() }).where(eq(jobs.id, job.id));
+    try {
+      await handle(job.kind, job.payload);
+      processed += 1;
+      await db
+        .update(jobs)
+        .set({ status: "done", completedAt: new Date(), updatedAt: new Date(), lastError: null })
+        .where(eq(jobs.id, job.id));
+    } catch (error) {
+      failed += 1;
+      const attempts = job.attempts + 1;
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempts >= job.maxAttempts) {
+        await db
+          .update(jobs)
+          .set({ status: "dead", attempts, lastError: message, updatedAt: new Date() })
+          .where(eq(jobs.id, job.id));
+      } else {
+        const backoffMs = Math.min(5 * 60_000, 2 ** attempts * 1000) + Math.random() * 500;
+        await db
+          .update(jobs)
+          .set({
+            status: "queued",
+            attempts,
+            lastError: message,
+            runAt: new Date(Date.now() + backoffMs),
+            updatedAt: new Date(),
+          })
+          .where(eq(jobs.id, job.id));
+      }
+    }
+  }
+
+  return { processed, failed };
+}
+
+export async function scheduleRecurring(): Promise<void> {
+  await ensureDb();
+  const now = Date.now();
+  await enqueue("invite.sweep", {}, { dedupeKey: "invite.sweep:daily", runAt: new Date(now + 60_000) });
+  await enqueue("session.sweep", {}, { dedupeKey: "session.sweep:daily", runAt: new Date(now + 120_000) });
+  await enqueue("cleanup.daily", {}, { dedupeKey: `cleanup.daily:${new Date(now).toISOString().slice(0, 10)}`, runAt: new Date(now + 300_000) });
+  await enqueue("version.prune", {}, { dedupeKey: "version.prune:daily", runAt: new Date(now + 180_000) });
+  await enqueue("media.orphan-sweep", {}, { dedupeKey: "media.sweep:weekly", runAt: new Date(now + 240_000) });
+}
+
+export async function listRecentJobs(limit = 20) {
+  await ensureDb();
+  return db.select().from(jobs).orderBy(sql`${jobs.createdAt} desc`).limit(limit);
+}
