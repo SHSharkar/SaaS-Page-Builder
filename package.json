@@ -34,7 +34,7 @@
     "db:purge-keep-window": "bun scripts/purge-keep-window.ts",
     "backup:decrypt": "bun scripts/decrypt-backup.ts",
     "preflight": "bun scripts/preflight.ts",
-    "verify": "VERIFY_TRIGGER=manual .husky/pre-push",
+    "verify": "VERIFY_TRIGGER=manual bun scripts/verify-gate.ts",
     "verify:fix": "bun run lint:fix && bun run lint:css:fix && bun scripts/verify-wording.ts --fix && bun run format && bun run verify",
     "verify:log": "bun scripts/verify-log.ts",
     "verify:contrast": "bun scripts/verify-color-contrast.ts",
@@ -56,7 +56,10 @@
     "verify:deps": "bunx --bun depcruise --config .dependency-cruiser.mjs app components hooks lib scripts",
     "verify:client-boundary": "bun scripts/verify-client-boundary.ts",
     "sbom": "bunx @cdxgen/cdxgen -o sbom.cdx.json",
-    "prepare": "husky"
+    "prepare": "husky",
+    "verify:fast": "VERIFY_TIER=fast bun scripts/verify-gate.ts",
+    "verify:code": "VERIFY_TIER=code bun scripts/verify-gate.ts",
+    "verify:schema": "VERIFY_TIER=schema bun scripts/verify-gate.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

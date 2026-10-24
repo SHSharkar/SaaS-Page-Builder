@@ -25,6 +25,7 @@ const ROUTE_GUARDS = [
   "requireAccountCapability(",
   "requirePlatformCapability(",
   "verifyHmacWebhookSignature(",
+  "verifyStripeWebhookSignature(",
   "INTERNAL_TLS_CHECK_TOKEN",
 ];
 

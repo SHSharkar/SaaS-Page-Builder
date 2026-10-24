@@ -2,4 +2,4 @@
 set -eu
 
 VERIFY_TRIGGER="${VERIFY_TRIGGER:-pre-push}" export VERIFY_TRIGGER
-exec bun scripts/verify-log.ts
+exec bun scripts/verify-gate.ts
