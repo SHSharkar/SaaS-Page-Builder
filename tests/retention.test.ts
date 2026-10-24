@@ -7,13 +7,13 @@ import { createPage, publishPage, pruneVersions, saveDraft, listVersions, newPag
 import { runDailyCleanup, cleanupPreview } from "@/lib/retention";
 import { KEEP, daysAgo } from "@/lib/lifecycle";
 import type { Actor } from "@/lib/auth/session";
+import { adminActor } from "./support/actor";
 
 let actor: Actor;
 
 beforeAll(async () => {
   await ensureDb();
-  const [admin] = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
-  actor = { user: admin, sessionId: "test", stepUpValid: true };
+  actor = await adminActor();
 });
 
 function doc(text: string) {

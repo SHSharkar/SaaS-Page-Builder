@@ -1,39 +1,71 @@
-import { and, asc, desc, eq, gt, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, lte } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { staffInvites, users } from "@/lib/db/schema";
+import { roles, sessions, staffInvites, userRoles, users } from "@/lib/db/schema";
 
 export type StaffMember = {
   id: string;
   name: string;
   email: string;
-  role: string;
   status: string;
+  mustChangePassword: boolean;
   twoFactorEnabled: boolean;
   lastSignInAt: Date | null;
   createdAt: Date;
+  roles: { id: string; key: string; name: string; rank: number; isSystem: boolean }[];
+  sessionCount: number;
 };
 
 export async function listStaff(): Promise<StaffMember[]> {
   await ensureDb();
-  return db
-    .select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      role: users.role,
-      status: users.status,
-      twoFactorEnabled: users.twoFactorEnabled,
-      lastSignInAt: users.lastSignInAt,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .orderBy(asc(users.name));
+  const people = await db.select().from(users).orderBy(asc(users.name));
+  const assignments = await db
+    .select({ userId: userRoles.userId, role: roles })
+    .from(userRoles)
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .orderBy(desc(roles.rank));
+  const sessionCounts = await db
+    .select({ userId: sessions.userId, total: count() })
+    .from(sessions)
+    .groupBy(sessions.userId);
+
+  const byUser = new Map<string, StaffMember["roles"]>();
+  for (const row of assignments) {
+    const list = byUser.get(row.userId) ?? [];
+    list.push({
+      id: row.role.id,
+      key: row.role.key,
+      name: row.role.name,
+      rank: row.role.rank,
+      isSystem: row.role.isSystem,
+    });
+    byUser.set(row.userId, list);
+  }
+  const sessionsByUser = new Map(sessionCounts.map((row) => [row.userId, Number(row.total)]));
+
+  return people.map((person) => ({
+    id: person.id,
+    name: person.name,
+    email: person.email,
+    status: person.status,
+    mustChangePassword: person.mustChangePassword,
+    twoFactorEnabled: person.twoFactorEnabled,
+    lastSignInAt: person.lastSignInAt,
+    createdAt: person.createdAt,
+    roles: byUser.get(person.id) ?? [],
+    sessionCount: sessionsByUser.get(person.id) ?? 0,
+  }));
+}
+
+export async function getStaffMember(userId: string): Promise<StaffMember | null> {
+  const all = await listStaff();
+  return all.find((member) => member.id === userId) ?? null;
 }
 
 export type PendingInvite = {
   id: string;
   email: string;
-  role: string;
+  roleId: string;
+  roleName: string;
   status: string;
   expiresAt: Date;
   createdAt: Date;
@@ -53,13 +85,15 @@ export async function listInvites(): Promise<PendingInvite[]> {
     .select({
       id: staffInvites.id,
       email: staffInvites.email,
-      role: staffInvites.role,
+      roleId: staffInvites.roleId,
+      roleName: roles.name,
       status: staffInvites.status,
       expiresAt: staffInvites.expiresAt,
       createdAt: staffInvites.createdAt,
       invitedByName: users.name,
     })
     .from(staffInvites)
+    .innerJoin(roles, eq(roles.id, staffInvites.roleId))
     .leftJoin(users, eq(users.id, staffInvites.invitedBy))
     .orderBy(desc(staffInvites.createdAt));
 

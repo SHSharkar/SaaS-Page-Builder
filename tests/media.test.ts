@@ -7,6 +7,7 @@ import { beginUpload, confirmUpload, listMedia, readMediaFile, uploadMedia, MAX_
 import { sniffMime, probeDimensions } from "@/lib/media";
 import { storageBackend } from "@/lib/media/storage";
 import type { Actor } from "@/lib/auth/session";
+import { adminActor } from "./support/actor";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
@@ -18,9 +19,8 @@ let siteId: string;
 
 beforeAll(async () => {
   await ensureDb();
-  const [admin] = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
-  actor = { user: admin, sessionId: "test", stepUpValid: true };
-  const site = await createSite({ name: "Media Test", slug: `media-test-${Date.now()}`, createdBy: admin.id });
+  actor = await adminActor();
+  const site = await createSite({ name: "Media Test", slug: `media-test-${Date.now()}`, createdBy: actor.user.id });
   siteId = site.id;
 });
 

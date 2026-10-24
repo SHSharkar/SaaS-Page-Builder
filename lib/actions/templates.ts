@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireRole } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { applyTemplate, retireTemplate, savePageAsTemplate, getTemplate } from "@/lib/templates";
 import { getPage } from "@/lib/pages";
 
@@ -19,7 +19,7 @@ export async function applyTemplateAction(input: {
   values: Record<string, string>;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.create");
     const template = await getTemplate(input.templateId);
     if (!template) throw new Error("Template not found.");
     const result = await applyTemplate({
@@ -39,7 +39,7 @@ export async function applyTemplateAction(input: {
 
 export async function retireTemplateAction(input: { templateId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("template.manage");
     await retireTemplate(input.templateId, actor);
     revalidatePath("/admin/templates");
     return { ok: true, message: "Template retired. Pages already created from it are untouched." };
@@ -55,7 +55,7 @@ export async function savePageAsTemplateAction(input: {
   description: string;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("template.manage");
     const page = await getPage(input.siteId, input.pageId);
     if (!page) throw new Error("Page not found.");
     const template = await savePageAsTemplate({

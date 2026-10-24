@@ -20,8 +20,12 @@ export async function recordAudit(input: AuditInput): Promise<void> {
   await ensureDb();
   const actorId =
     input.actor && "user" in input.actor ? input.actor.user.id : (input.actor?.id ?? null);
+  // The snapshot is display history, so it records the role names as they were
+  // at the time of the action rather than a foreign key that may change later.
   const actorRole =
-    input.actor && "user" in input.actor ? input.actor.user.role : (input.actor?.role ?? null);
+    input.actor && "user" in input.actor
+      ? input.actor.roles.map((role) => role.name).join(", ") || null
+      : (input.actor?.role ?? null);
   await db.insert(auditLog).values({
     action: input.action,
     summary: input.summary,

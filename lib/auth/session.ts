@@ -1,18 +1,14 @@
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { and, eq, gt, lt, sql } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { sessions, users, type User } from "@/lib/db/schema";
-import { hashToken, newToken } from "./password";
+import { sessions, users, type Role, type SessionRecord, type User } from "@/lib/db/schema";
+import { auth } from "./server";
+import { permissionKeysForUser, rolesForUser } from "./rbac";
+import { permissionDefinition } from "./rbac";
 
-export const SESSION_COOKIE = "trofeo_session";
-const SESSION_DAYS = 7;
 const STEP_UP_MINUTES = 10;
-const PENDING_2FA_MINUTES = 10;
-
-export type Role = User["role"];
-export type Actor = { user: User; sessionId: string; stepUpValid: boolean };
 
 export class AuthError extends Error {
   status: number;
@@ -22,85 +18,62 @@ export class AuthError extends Error {
   }
 }
 
-async function cookieOptions() {
-  return {
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-  };
+export type Actor = {
+  user: User;
+  session: SessionRecord;
+  /** Highest rank first; the first role is what the header shows. */
+  roles: Role[];
+  permissions: Set<string>;
+  stepUpValid: boolean;
+};
+
+/** The role names, for display only. Authorization never reads this. */
+export function roleLabels(actor: Actor): string {
+  return actor.roles.length ? actor.roles.map((role) => role.name).join(", ") : "No role";
 }
 
-export async function createSession(
-  userId: string,
-  options: { pendingTwoFactor?: boolean } = {},
-): Promise<string> {
-  const token = newToken();
-  const h = await headers().catch(() => null);
-  const expiresAt = new Date(
-    Date.now() + (options.pendingTwoFactor ? PENDING_2FA_MINUTES : SESSION_DAYS * 24 * 60) * 60_000,
-  );
-  await db.insert(sessions).values({
-    tokenHash: hashToken(token),
-    userId,
-    expiresAt,
-    pendingTwoFactor: options.pendingTwoFactor ?? false,
-    ipAddress: h?.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    userAgent: h?.get("user-agent")?.slice(0, 250) ?? null,
-  });
-  (await cookies()).set(SESSION_COOKIE, token, { ...(await cookieOptions()), expires: expiresAt });
-  return token;
+export function primaryRole(actor: Actor): Role | null {
+  return actor.roles[0] ?? null;
 }
 
-export async function clearSessionCookie() {
-  (await cookies()).delete(SESSION_COOKIE);
+/**
+ * Rank is a hierarchy, not a permission: "admins may override the author" rules
+ * (retiring someone else's template, for instance) read the rank of the roles
+ * the actor holds, so a custom role above 100 behaves like an admin.
+ */
+export const ADMIN_RANK = 100;
+
+export function isAdminRank(actor: Actor | null): boolean {
+  return !!actor?.roles.some((role) => role.rank >= ADMIN_RANK);
 }
 
-/** Resolves the actor from the session cookie, server-side, on every request. */
+/**
+ * Resolves the actor from Better Auth's session, then loads the roles and
+ * permissions that identity holds. Every request re-reads them, so a role
+ * change takes effect on the next click rather than on the next sign-in.
+ */
 export const getActor = cache(async (): Promise<Actor | null> => {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token) return null;
   await ensureDb();
-  const [row] = await db
-    .select({ session: sessions, user: users })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(
-      and(
-        eq(sessions.tokenHash, hashToken(token)),
-        gt(sessions.expiresAt, new Date()),
-        eq(sessions.pendingTwoFactor, false),
-        eq(users.status, "active"),
-      ),
-    )
-    .limit(1);
-  if (!row) return null;
-  return {
-    user: row.user,
-    sessionId: row.session.id,
-    stepUpValid: !!row.session.stepUpUntil && row.session.stepUpUntil > new Date(),
-  };
-});
+  const requestHeaders = await headers();
+  const result = await auth.api.getSession({ headers: requestHeaders }).catch(() => null);
+  if (!result?.user) return null;
 
-/** The pending second-factor state, resolved from the same cookie. */
-export const getPendingTwoFactor = cache(async () => {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  await ensureDb();
-  const [row] = await db
-    .select({ session: sessions, user: users })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(
-      and(
-        eq(sessions.tokenHash, hashToken(token)),
-        eq(sessions.pendingTwoFactor, true),
-        gt(sessions.expiresAt, new Date()),
-        eq(users.status, "active"),
-      ),
-    )
-    .limit(1);
-  return row ?? null;
+  const [user] = await db.select().from(users).where(eq(users.id, result.user.id)).limit(1);
+  if (!user || user.status !== "active") return null;
+
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, result.session.id)).limit(1);
+  if (!session) return null;
+
+  const roles = await rolesForUser(user.id);
+  const permissions = new Set(await permissionKeysForUser(user.id));
+
+  return {
+    user,
+    session,
+    roles,
+    permissions,
+    stepUpValid: !!session.stepUpUntil && session.stepUpUntil > new Date(),
+  };
 });
 
 export async function requireActor(): Promise<Actor> {
@@ -109,32 +82,57 @@ export async function requireActor(): Promise<Actor> {
   return actor;
 }
 
-const RANK: Record<Role, number> = { viewer: 1, editor: 2, admin: 3 };
-
-export function can(actor: Actor, minimum: Role): boolean {
-  return RANK[actor.user.role] >= RANK[minimum];
+export function can(actor: Actor | null, permission: string): boolean {
+  return !!actor?.permissions.has(permission);
 }
 
-export async function requireRole(minimum: Role): Promise<Actor> {
+/**
+ * The single authorization door. It is deny-by-default: an actor without the
+ * permission gets a 403 that names the capability, and an unknown key is a
+ * programming error rather than a silent allow.
+ */
+export function assertPermission(actor: Actor, permission: string): void {
+  const definition = permissionDefinition(permission);
+  if (!definition) throw new Error(`Unknown permission "${permission}". Add it to lib/auth/permissions.ts.`);
+  if (!actor.permissions.has(permission)) {
+    throw new AuthError(`This action needs the "${definition.label}" permission.`, 403);
+  }
+}
+
+export async function requirePermission(permission: string): Promise<Actor> {
   const actor = await requireActor();
-  if (!can(actor, minimum)) {
-    throw new AuthError(`This action needs the ${minimum} role.`, 403);
+  assertPermission(actor, permission);
+  return actor;
+}
+
+/**
+ * Page-level guard. A screen you cannot view redirects to the dashboard with a
+ * named explanation rather than throwing a 500; the data itself never loads.
+ */
+export async function requireView(permission: string): Promise<Actor> {
+  const actor = await requireActor();
+  if (!actor.permissions.has(permission)) {
+    const label = permissionDefinition(permission)?.label ?? permission;
+    redirect(`/admin?denied=${encodeURIComponent(label)}`);
   }
   return actor;
 }
 
-/** Sensitive acts (role changes, domain binding, deletes) demand fresh proof. */
+/** Sensitive acts (role changes, deletes, hostnames) demand fresh proof. */
 export async function requireStepUp(actor: Actor): Promise<void> {
   if (!actor.stepUpValid) {
-    throw new AuthError("Confirm your identity again to continue.", 428);
+    throw new AuthError("Confirm your password again to continue.", 428);
   }
 }
 
-export async function markStepUp(sessionId: string): Promise<void> {
+export async function markStepUp(actor: Actor): Promise<void> {
   await db
     .update(sessions)
-    .set({ stepUpUntil: new Date(Date.now() + STEP_UP_MINUTES * 60_000) })
-    .where(eq(sessions.id, sessionId));
+    .set({
+      stepUpUntil: new Date(Date.now() + STEP_UP_MINUTES * 60_000),
+      updatedAt: new Date(),
+    })
+    .where(eq(sessions.id, actor.session.id));
 }
 
 export async function revokeSession(sessionId: string): Promise<void> {
@@ -146,16 +144,8 @@ export async function sweepSessions(): Promise<number> {
   return result.rowCount ?? 0;
 }
 
-export async function countActiveAdmins(excludeUserId?: string): Promise<number> {
-  const rows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(users)
-    .where(
-      and(
-        eq(users.role, "admin"),
-        eq(users.status, "active"),
-        excludeUserId ? sql`${users.id} <> ${excludeUserId}` : sql`true`,
-      ),
-    );
-  return rows[0]?.count ?? 0;
+/** Signs the current request out through Better Auth and clears the cookie. */
+export async function signOutCurrentSession(): Promise<void> {
+  const requestHeaders = await headers();
+  await auth.api.signOut({ headers: requestHeaders }).catch(() => null);
 }

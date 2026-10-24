@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { platformSettings } from "@/lib/db/schema";
-import { requireRole } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { cacheClear, cacheStats } from "@/lib/cache";
 import { runDueJobs } from "@/lib/queue";
 import { sweepSessions } from "@/lib/auth/session";
@@ -17,7 +17,7 @@ function failure(error: unknown): ActionState {
 
 export async function updatePlatformSettingAction(input: { key: string; value: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("settings.manage");
     await ensureDb();
     const [existing] = await db
       .select()
@@ -44,7 +44,7 @@ export async function updatePlatformSettingAction(input: { key: string; value: s
 
 export async function runWorkerTickAction(): Promise<ActionState> {
   try {
-    await requireRole("admin");
+    await requirePermission("queue.run");
     const result = await runDueJobs(20);
     const swept = await sweepSessions();
     cacheClear();
@@ -59,7 +59,7 @@ export async function runWorkerTickAction(): Promise<ActionState> {
 
 export async function runCleanupAction(): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("cleanup.run");
     const { runDailyCleanup } = await import("@/lib/retention");
     const result = await runDailyCleanup(actor);
     cacheClear();
@@ -81,7 +81,7 @@ export async function runCleanupAction(): Promise<ActionState> {
 
 export async function clearCacheAction(): Promise<ActionState> {
   try {
-    await requireRole("admin");
+    await requirePermission("settings.manage");
     cacheClear();
     const stats = cacheStats();
     return { ok: true, message: `Cache cleared. ${stats.keys} keys remain (${stats.hitRateNote}).` };

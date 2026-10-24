@@ -7,7 +7,7 @@ import {
   type PageDocument,
   type PlaceholderSpec,
 } from "@/lib/documents";
-import type { Actor } from "@/lib/auth/session";
+import { isAdminRank, type Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { createPage } from "@/lib/pages";
 
@@ -131,7 +131,7 @@ export async function retireTemplate(id: string, actor: Actor): Promise<void> {
   await ensureDb();
   const template = await getTemplate(id);
   if (!template) throw new Error("Template not found.");
-  if (template.scope === "staff" && template.createdBy !== actor.user.id && actor.user.role !== "admin") {
+  if (template.scope === "staff" && template.createdBy !== actor.user.id && !isAdminRank(actor)) {
     throw new Error("Only the author or an admin can retire a staff template.");
   }
   await db.update(templates).set({ status: "retired", updatedAt: new Date() }).where(and(eq(templates.id, id)));

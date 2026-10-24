@@ -6,6 +6,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -26,7 +27,6 @@ import type {
  * asks for one (section 3.5).
  * ------------------------------------------------------------------ */
 
-export const userRole = pgEnum("user_role", ["admin", "editor", "viewer"]);
 export const userStatus = pgEnum("user_status", ["active", "disabled"]);
 export const siteStatus = pgEnum("site_status", ["active", "suspended", "deleted"]);
 export const domainKind = pgEnum("domain_kind", ["platform_subdomain", "custom"]);
@@ -118,57 +118,208 @@ export const auditAction = pgEnum("audit_action", [
   "settings_changed",
   "step_up_granted",
   "cleanup_ran",
+  "account_created",
+  "account_updated",
+  "account_suspended",
+  "account_reactivated",
+  "password_changed",
+  "password_reset_requested",
+  "roles_assigned",
+  "role_created",
+  "role_updated",
+  "role_deleted",
+  "session_revoked",
+  "two_factor_enabled",
+  "two_factor_disabled",
 ]);
 
 /* ------------------------------------------------------------------ *
- * M1 Identity & access (T01–T05, T20). Better Auth's tables are
- * reproduced here in the shape the app actually uses; the auth module
- * is the only writer.
+ * M1 Identity & access. Better Auth owns identity (user, account,
+ * session, verification, two-factor); this app owns authorization
+ * (role, permission, role_permission, user_role) and invitations.
  * ------------------------------------------------------------------ */
 
-export const users = pgTable("user", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name").notNull(),
-  email: text("email").notNull(),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  passwordHash: text("password_hash"),
-  role: userRole("role").notNull().default("editor"),
-  status: userStatus("status").notNull().default("active"),
-  twoFactorSecret: text("two_factor_secret"),
-  twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
-  lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const users = pgTable(
+  "user",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    /** App-level suspension. Sign-in and every session are refused while disabled. */
+    status: userStatus("status").notNull().default("active"),
+    /** Set when an admin creates an account or resets a password. */
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+    lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("user_email_idx").on(t.email), index("user_status_idx").on(t.status)],
+);
+
+/** Better Auth credential and (later) social accounts. The only writer is Better Auth. */
+export const accounts = pgTable(
+  "account",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("account_provider_account_idx").on(t.providerId, t.accountId),
+    index("account_user_idx").on(t.userId),
+  ],
+);
 
 export const sessions = pgTable(
   "session",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    tokenHash: text("token_hash").notNull(),
+    token: text("token").notNull(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    stepUpUntil: timestamp("step_up_until", { withTimezone: true }),
-    pendingTwoFactor: boolean("pending_two_factor").notNull().default(false),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    /** Fresh-proof window for sensitive acts, owned by this app. */
+    stepUpUntil: timestamp("step_up_until", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("session_token_idx").on(t.token), index("session_user_idx").on(t.userId)],
+);
+
+export const verifications = pgTable(
+  "verification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("verification_identifier_idx").on(t.identifier)],
+);
+
+export const twoFactors = pgTable(
+  "two_factor",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    verified: boolean("verified").notNull().default(true),
+    /** Anti-bruteforce counters the two-factor plugin expects to own. */
+    failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("two_factor_user_idx").on(t.userId)],
+);
+
+/**
+ * Authorization. Roles are rows, permissions are rows, and the join tables are
+ * the only thing a guard reads. The catalogue of permission keys lives in
+ * `lib/auth/permissions.ts` so code and data cannot drift apart.
+ */
+export const roles = pgTable(
+  "role",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    rank: integer("rank").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
+    /**
+     * Whether the code-defined grants have been written into this role once.
+     * After that the matrix in /admin/roles owns them, so an admin can narrow
+     * Editor or Viewer without the next boot undoing it.
+     */
+    permissionsSeeded: boolean("permissions_seeded").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("role_key_idx").on(t.key)],
+);
+
+export const permissions = pgTable(
+  "permission",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    key: text("key").notNull(),
+    groupKey: text("group_key").notNull(),
+    label: text("label").notNull(),
+    description: text("description").notNull().default(""),
+    dangerous: boolean("dangerous").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("session_token_hash_idx").on(t.tokenHash), index("session_user_idx").on(t.userId)],
+  (t) => [uniqueIndex("permission_key_idx").on(t.key)],
+);
+
+export const rolePermissions = pgTable(
+  "role_permission",
+  {
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    permissionId: uuid("permission_id")
+      .notNull()
+      .references(() => permissions.id, { onDelete: "cascade" }),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+    grantedBy: uuid("granted_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.permissionId] })],
+);
+
+export const userRoles = pgTable(
+  "user_role",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedBy: uuid("assigned_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.roleId] }), index("user_role_role_idx").on(t.roleId)],
 );
 
 /**
  * T20 — the only door into the platform. Invite-only; self-registration
- * does not exist (ADR-002).
+ * does not exist (ADR-002). The role is a row, so a custom role can be
+ * attached to an invitation.
  */
 export const staffInvites = pgTable(
   "staff_invite",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     email: text("email").notNull(),
-    role: userRole("role").notNull().default("editor"),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => roles.id, { onDelete: "restrict" }),
     tokenHash: text("token_hash").notNull(),
     status: inviteStatus("status").notNull().default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -515,4 +666,8 @@ export type MediaAsset = typeof mediaAssets.$inferSelect;
 export type ImportJob = typeof importJobs.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type StaffInvite = typeof staffInvites.$inferSelect;
+export type Role = typeof roles.$inferSelect;
+export type Permission = typeof permissions.$inferSelect;
+export type SessionRecord = typeof sessions.$inferSelect;
+export type Account = typeof accounts.$inferSelect;
 export type Job = typeof jobs.$inferSelect;

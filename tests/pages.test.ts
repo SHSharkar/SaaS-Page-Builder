@@ -19,6 +19,7 @@ import {
 } from "@/lib/pages";
 import { LifecycleError } from "@/lib/errors";
 import type { Actor } from "@/lib/auth/session";
+import { adminActor } from "./support/actor";
 
 let actor: Actor;
 let siteId: string;
@@ -38,9 +39,8 @@ function documentWith(text: string) {
 
 beforeAll(async () => {
   await ensureDb();
-  const [admin] = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
-  actor = { user: admin, sessionId: "test", stepUpValid: true };
-  const site = await createSite({ name: "Pages Test", slug: `pages-test-${Date.now()}`, createdBy: admin.id });
+  actor = await adminActor();
+  const site = await createSite({ name: "Pages Test", slug: `pages-test-${Date.now()}`, createdBy: actor.user.id });
   siteId = site.id;
 });
 

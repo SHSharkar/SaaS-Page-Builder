@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireRole } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { consumeRateLimit } from "@/lib/cache";
 import { applyImportJob, createImportJob, discardImportJob, getImportJob } from "@/lib/importer";
 import type { ImportReviewDecision } from "@/lib/documents";
@@ -27,7 +27,7 @@ export async function uploadImportAction(input: {
   html: string;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("import.create");
     if (!consumeRateLimit(`import:${actor.user.id}`, DAILY_IMPORTS, 24 * 60 * 60)) {
       throw new Error(`Import limit reached — ${DAILY_IMPORTS} imports per staff member per day.`);
     }
@@ -58,7 +58,7 @@ export async function applyImportAction(input: {
   decisions: ImportReviewDecision[];
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("import.review");
     const job = await getImportJob(input.siteId, input.jobId);
     if (!job) throw new Error("Import job not found.");
     if (!input.decisions.some((decision) => decision.decision !== "removed")) {
@@ -88,7 +88,7 @@ export async function applyImportAction(input: {
 
 export async function discardImportAction(input: { siteId: string; jobId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("import.review");
     await discardImportJob(input.siteId, input.jobId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/imports`);
     return { ok: true, message: "Import discarded" };

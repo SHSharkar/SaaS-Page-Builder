@@ -17,6 +17,7 @@ import { buildMetadata } from "@/lib/render";
 import { DEFAULT_SEO, DEFAULT_THEME } from "@/lib/documents";
 import { cacheKeys, invalidatePageCache } from "@/lib/cache";
 import type { Actor } from "@/lib/auth/session";
+import { adminActor } from "./support/actor";
 
 const HOST = "render-test.example";
 
@@ -32,9 +33,8 @@ function doc(text: string) {
 
 beforeAll(async () => {
   await ensureDb();
-  const [admin] = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
-  actor = { user: admin, sessionId: "test", stepUpValid: true };
-  const site = await createSite({ name: "Render Test", slug: `render-test-${Date.now()}`, createdBy: admin.id });
+  actor = await adminActor();
+  const site = await createSite({ name: "Render Test", slug: `render-test-${Date.now()}`, createdBy: actor.user.id });
   siteId = site.id;
   await db.insert(domains).values({
     siteId,

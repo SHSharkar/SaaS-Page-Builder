@@ -15,6 +15,20 @@
       "when": 1792846163309,
       "tag": "0001_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792847323741,
+      "tag": "0002_auth_rbac",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792847733867,
+      "tag": "0003_two_factor_guards",
+      "breakpoints": true
     }
   ]
 }

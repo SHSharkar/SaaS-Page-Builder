@@ -9,9 +9,9 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { pages, users } from "@/lib/db/schema";
+import { accounts, pages, roles, userRoles, users } from "@/lib/db/schema";
 import {
   archivePage,
   createPage,
@@ -46,6 +46,7 @@ import { LifecycleError } from "@/lib/errors";
 import { storageInfo } from "@/lib/media/storage";
 import { DOCUMENT_SCHEMA_VERSION, DEFAULT_ROOT_PROPS, emptyDocument, type PageDocument } from "@/lib/documents";
 import type { Actor } from "@/lib/auth/session";
+import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
 
 let failures = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -59,8 +60,56 @@ function check(label: string, condition: boolean, detail = "") {
 
 async function main() {
   await ensureDb();
-  const [user] = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
-  const actor: Actor = { user, sessionId: "smoke", stepUpValid: true };
+  const [user] = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(userRoles, eq(userRoles.userId, users.id))
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(and(eq(users.status, "active"), gte(roles.rank, 100)))
+    .limit(1)
+    .then((rows) => rows.map((row) => row.user));
+  if (!user) throw new Error("No active admin to run the smoke test as.");
+  const actor: Actor = {
+    user,
+    session: {
+      id: "00000000-0000-0000-0000-000000000000",
+      token: "smoke",
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      ipAddress: null,
+      userAgent: "smoke",
+      stepUpUntil: new Date(Date.now() + 3_600_000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    roles: await rolesForUser(user.id),
+    permissions: new Set(await permissionKeysForUser(user.id)),
+    stepUpValid: true,
+  };
+
+  console.log("\n• access control");
+  const grants = await permissionKeysForUser(user.id);
+  check("the admin holds the whole permission catalogue", grants.length >= 40);
+  const [editor] = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(userRoles, eq(userRoles.userId, users.id))
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(eq(roles.key, "editor"))
+    .limit(1)
+    .then((rows) => rows.map((row) => row.user));
+  check("the editor account exists", !!editor);
+  if (editor) {
+    const editorGrants = await permissionKeysForUser(editor.id);
+    check("the editor may publish pages", editorGrants.includes("page.publish"));
+    check("the editor may not manage roles", !editorGrants.includes("role.manage"));
+    check("the editor may not change platform settings", !editorGrants.includes("settings.manage"));
+  }
+  const [credential] = await db.select().from(accounts).where(eq(accounts.userId, user.id)).limit(1);
+  check(
+    "the admin password lives in a Better Auth credential row",
+    credential?.providerId === "credential",
+  );
 
   console.log("\n• sites and pages");
   const site = await createSite({ name: "Smoke Test", slug: "smoke-test", createdBy: user.id });

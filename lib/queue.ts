@@ -1,7 +1,8 @@
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { jobs, users, staffInvites, pages, siteContents } from "@/lib/db/schema";
+import { jobs, roles, sessions, staffInvites, pages, siteContents, userRoles, users } from "@/lib/db/schema";
 import type { Actor } from "@/lib/auth/session";
+import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
 import { publishPage, unpublishPage, pruneVersions } from "@/lib/pages";
 import { verifyDomain } from "@/lib/domains";
 import { cacheClear } from "@/lib/cache";
@@ -42,12 +43,36 @@ export async function enqueue(
 /** Jobs act as the last active admin, recorded as such in the audit trail. */
 export async function getSystemActor(): Promise<Actor | null> {
   await ensureDb();
-  const [admin] = await db
-    .select()
+  // The actor is "whoever still holds an admin-rank role", not a hard-coded
+  // address, and the session is synthetic: a job has no cookie to act through.
+  const [row] = await db
+    .select({ user: users })
     .from(users)
-    .where(and(eq(users.role, "admin"), eq(users.status, "active")))
+    .innerJoin(userRoles, eq(userRoles.userId, users.id))
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(and(eq(users.status, "active"), gte(roles.rank, 100)))
+    .orderBy(desc(roles.rank))
     .limit(1);
-  return admin ? { user: admin, sessionId: "system", stepUpValid: true } : null;
+  if (!row) return null;
+  const [session] = await db.select().from(sessions).where(eq(sessions.userId, row.user.id)).limit(1);
+  return {
+    user: row.user,
+    session:
+      session ?? {
+        id: "00000000-0000-0000-0000-000000000000",
+        token: "system",
+        userId: row.user.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        ipAddress: null,
+        userAgent: "queue",
+        stepUpUntil: new Date(Date.now() + 60_000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    roles: await rolesForUser(row.user.id),
+    permissions: new Set(await permissionKeysForUser(row.user.id)),
+    stepUpValid: true,
+  };
 }
 
 async function handle(jobKind: string, payload: Record<string, unknown>): Promise<void> {

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireActor, requireRole, can } from "@/lib/auth/session";
+import { requireActor, requirePermission, can, roleLabels } from "@/lib/auth/session";
 import {
   createPage,
   publishPage,
@@ -33,7 +33,7 @@ export async function saveDraftAction(input: {
   lockVersion: number;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.edit");
     const result = await saveDraft(input.siteId, input.pageId, input.document, input.lockVersion, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, lockVersion: result.lockVersion, message: "Draft saved" };
@@ -49,7 +49,7 @@ export async function saveGlobalsDraftAction(input: {
   lockVersion: number;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("globals.edit");
     const result = await saveGlobalsDraft(input.siteId, input.kind, input.document, input.lockVersion, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, lockVersion: result.lockVersion, message: "Draft saved" };
@@ -63,7 +63,7 @@ export async function saveDefaultSeoAction(input: {
   seo: Partial<PageSeo>;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("globals.edit");
     const { getSiteContent } = await import("@/lib/globals");
     const { DEFAULT_ROOT_PROPS, DOCUMENT_SCHEMA_VERSION } = await import("@/lib/documents");
     const content = await getSiteContent(input.siteId, "defaults");
@@ -83,7 +83,7 @@ export async function saveDefaultSeoAction(input: {
 
 export async function publishAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.publish");
     const result = await publishPage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: `Published as version ${result.versionNumber}`, pageId: input.pageId };
@@ -94,7 +94,7 @@ export async function publishAction(input: { siteId: string; pageId: string }): 
 
 export async function publishGlobalsAction(input: { siteId: string; kind: GlobalKind }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("globals.publish");
     await publishGlobals(input.siteId, input.kind, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: "Published to every page" };
@@ -105,7 +105,7 @@ export async function publishGlobalsAction(input: { siteId: string; kind: Global
 
 export async function unpublishAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.publish");
     await unpublishPage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: "Taken offline. The cache cleared in this request." };
@@ -116,7 +116,7 @@ export async function unpublishAction(input: { siteId: string; pageId: string })
 
 export async function archiveAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.archive");
     await archivePage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: "Archived" };
@@ -127,7 +127,7 @@ export async function archiveAction(input: { siteId: string; pageId: string }): 
 
 export async function restoreAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.restore");
     await restorePage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/pages/${input.pageId}`);
     return { ok: true, message: "Restored as a draft — publish when you are ready." };
@@ -138,7 +138,7 @@ export async function restoreAction(input: { siteId: string; pageId: string }): 
 
 export async function rollbackAction(input: { siteId: string; pageId: string; versionId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.publish");
     const result = await rollbackToVersion(input.siteId, input.pageId, input.versionId, actor);
     revalidatePath(`/edit/${input.siteId}/${input.pageId}`);
     return { ok: true, message: `Rolled back — now version ${result.versionNumber}` };
@@ -149,7 +149,7 @@ export async function rollbackAction(input: { siteId: string; pageId: string; ve
 
 export async function setHomepageAction(input: { siteId: string; pageId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.publish");
     await setHomepage(input.siteId, input.pageId, actor);
     revalidatePath(`/admin/sites/${input.siteId}`);
     return { ok: true, message: "Homepage updated" };
@@ -165,7 +165,7 @@ export async function scheduleAction(input: {
   operator: "publish" | "unpublish";
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.schedule");
     const when = input.when ? new Date(input.when) : null;
     if (when && Number.isNaN(when.getTime())) throw new Error("Enter a valid date and time.");
     await schedulePublish(input.siteId, input.pageId, when, input.operator, actor);
@@ -183,7 +183,7 @@ export async function updatePageMetaAction(input: {
   seo: Partial<PageSeo>;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("page.edit");
     await updatePageMeta(
       input.siteId,
       input.pageId,
@@ -198,7 +198,7 @@ export async function updatePageMetaAction(input: {
 }
 
 export async function createPageAction(formData: FormData): Promise<void> {
-  const actor = await requireRole("editor");
+  const actor = await requirePermission("page.create");
   const siteId = String(formData.get("siteId"));
   const title = String(formData.get("title") ?? "Untitled page");
   const slug = String(formData.get("slug") ?? "");
@@ -231,7 +231,7 @@ export async function saveAsTemplateAction(input: {
   description: string;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("template.manage");
     const page = await getPage(input.siteId, input.pageId);
     if (!page) throw new Error("Page not found.");
     const { savePageAsTemplate } = await import("@/lib/templates");
@@ -250,5 +250,9 @@ export async function saveAsTemplateAction(input: {
 
 export async function whoAmI() {
   const actor = await requireActor();
-  return { name: actor.user.name, role: actor.user.role, canEdit: can(actor, "editor") };
+  return {
+    name: actor.user.name,
+    roles: actor.roles.map((role) => role.name),
+    canEdit: can(actor, "page.edit"),
+  };
 }

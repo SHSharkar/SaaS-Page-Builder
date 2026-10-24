@@ -4,14 +4,14 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { mediaAssets } from "@/lib/db/schema";
-import { requireRole } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { deleteMedia, findMediaReferences, uploadMedia } from "@/lib/media";
 
 export type ActionState = { ok: boolean; error?: string; message?: string; references?: string[] };
 
 export async function uploadMediaAction(formData: FormData): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("media.upload");
     const siteId = String(formData.get("siteId"));
     const file = formData.get("file");
     if (!(file instanceof File)) throw new Error("Choose a file first.");
@@ -37,7 +37,7 @@ export async function uploadMediaAction(formData: FormData): Promise<ActionState
 
 export async function updateAltTextAction(input: { siteId: string; mediaId: string; altText: string }): Promise<ActionState> {
   try {
-    await requireRole("editor");
+    await requirePermission("media.upload");
     await ensureDb();
     await db
       .update(mediaAssets)
@@ -52,7 +52,7 @@ export async function updateAltTextAction(input: { siteId: string; mediaId: stri
 
 export async function deleteMediaAction(input: { siteId: string; mediaId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("media.delete");
     await deleteMedia(input.siteId, input.mediaId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/media`);
     return { ok: true, message: "Image deleted" };
@@ -63,7 +63,7 @@ export async function deleteMediaAction(input: { siteId: string; mediaId: string
 
 export async function checkReferencesAction(input: { siteId: string; mediaId: string }): Promise<ActionState> {
   try {
-    await requireRole("viewer");
+    await requirePermission("media.view");
     const references = await findMediaReferences(input.siteId, input.mediaId);
     return {
       ok: references.length === 0,

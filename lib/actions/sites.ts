@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { domains, users } from "@/lib/db/schema";
-import { requireActor, requireRole, requireStepUp } from "@/lib/auth/session";
+import { domains, userRoles, users } from "@/lib/db/schema";
+import { requireActor, requirePermission, requireStepUp } from "@/lib/auth/session";
+import { listRoles } from "@/lib/auth/rbac";
 import {
   createSite,
   getSite,
@@ -30,7 +31,7 @@ function failure(error: unknown): ActionState {
 }
 
 export async function createSiteAction(formData: FormData): Promise<void> {
-  const actor = await requireRole("admin");
+  const actor = await requirePermission("site.create");
   const name = String(formData.get("name") ?? "").trim();
   const slug = String(formData.get("slug") ?? "").trim();
   const accent = String(formData.get("accent") ?? "#c8a24a");
@@ -61,7 +62,7 @@ export async function updateSiteAction(input: {
   theme: Record<string, string>;
 }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("site.update");
     const site = await getSite(input.siteId);
     if (!site) throw new Error("Site not found.");
     if (input.name.trim() && input.name !== site.name) {
@@ -86,7 +87,7 @@ export async function updateSiteAction(input: {
 
 export async function suspendSiteAction(input: { siteId: string; suspend: boolean }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("site.suspend");
     await requireStepUp(actor);
     const site = await getSite(input.siteId);
     if (!site) throw new Error("Site not found.");
@@ -111,7 +112,7 @@ export async function suspendSiteAction(input: { siteId: string; suspend: boolea
 
 export async function addDomainAction(input: { siteId: string; hostname: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("domain.manage");
     await requireStepUp(actor);
     const domain = await addCustomDomain(input.siteId, input.hostname, actor);
     await enqueue("domain.verify", { domainId: domain.id }, { dedupeKey: `domain.verify:${domain.id}` });
@@ -124,7 +125,7 @@ export async function addDomainAction(input: { siteId: string; hostname: string 
 
 export async function verifyDomainAction(input: { siteId: string; domainId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("domain.manage");
     const outcome = await verifyDomain(input.domainId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/domains`);
     if (outcome.status === "active") return { ok: true, message: "Verified. The certificate gate now allows this host." };
@@ -139,7 +140,7 @@ export async function verifyDomainAction(input: { siteId: string; domainId: stri
 
 export async function retryDomainAction(input: { siteId: string; domainId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("editor");
+    const actor = await requirePermission("domain.manage");
     await retryDomainVerification(input.domainId, actor);
     await enqueue("domain.verify", { domainId: input.domainId }, { dedupeKey: `domain.verify:${input.domainId}` });
     return { ok: true, message: "Queued a fresh verification attempt." };
@@ -150,7 +151,7 @@ export async function retryDomainAction(input: { siteId: string; domainId: strin
 
 export async function removeDomainAction(input: { siteId: string; domainId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("domain.manage");
     await requireStepUp(actor);
     await removeDomain(input.domainId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/domains`);
@@ -162,7 +163,7 @@ export async function removeDomainAction(input: { siteId: string; domainId: stri
 
 export async function makePrimaryDomainAction(input: { siteId: string; domainId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("domain.manage");
     await makePrimaryDomain(input.siteId, input.domainId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/domains`);
     return { ok: true, message: "Primary address updated" };
@@ -173,7 +174,7 @@ export async function makePrimaryDomainAction(input: { siteId: string; domainId:
 
 export async function deleteSiteAction(input: { siteId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("site.delete");
     await requireStepUp(actor);
     const site = await getSite(input.siteId);
     if (!site) throw new Error("Site not found.");
@@ -205,7 +206,7 @@ export async function deleteSiteAction(input: { siteId: string }): Promise<Actio
 
 export async function restoreSiteAction(input: { siteId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("site.restore");
     await requireStepUp(actor);
     const site = await getSiteRow(input.siteId);
     if (!site) throw new Error("Site not found.");
@@ -231,7 +232,7 @@ export async function restoreSiteAction(input: { siteId: string }): Promise<Acti
 
 export async function purgeSiteAction(input: { siteId: string }): Promise<ActionState> {
   try {
-    const actor = await requireRole("admin");
+    const actor = await requirePermission("site.purge");
     await requireStepUp(actor);
     const site = await getSiteRow(input.siteId);
     if (!site) throw new Error("Site not found.");
@@ -259,8 +260,18 @@ export async function listDeletedSitesForAdmin() {
 
 export async function listAssignableStaff() {
   await ensureDb();
-  return db
-    .select({ id: users.id, name: users.name, email: users.email, role: users.role, status: users.status })
+  const rows = await db
+    .select({ id: users.id, name: users.name, email: users.email, status: users.status })
     .from(users)
     .orderBy(users.name);
+  const roles = await listRoles();
+  const assignments = await db
+    .select({ userId: userRoles.userId, roleId: userRoles.roleId })
+    .from(userRoles);
+  return rows.map((row) => ({
+    ...row,
+    roles: roles
+      .filter((role) => assignments.some((entry) => entry.userId === row.id && entry.roleId === role.id))
+      .map((role) => role.name),
+  }));
 }

@@ -19,7 +19,9 @@ import {
 } from "@/lib/documents";
 import { DEFAULT_APPEARANCE } from "@/lib/registry/types";
 import { defaultPropsFor } from "@/lib/registry";
-import { hashPassword, hashToken, newToken } from "@/lib/auth/password";
+import { hashToken, newToken } from "@/lib/auth/password";
+import { createAccount } from "@/lib/auth/mutations";
+import { listRoles, permissionKeysForUser, syncRbacCatalog } from "@/lib/auth/rbac";
 import { createSite } from "@/lib/sites";
 import { createPage, publishPage } from "@/lib/pages";
 import { getSiteContent, publishGlobals, saveGlobalsDraft } from "@/lib/globals";
@@ -52,74 +54,78 @@ function doc(content: BlockNode[]): PageDocument {
   };
 }
 
-function adminActor(user: {
-  id: string;
-  name: string;
-  role: "admin" | "editor" | "viewer";
-  email: string;
-}): Actor {
+/** A stand-in actor for the seed's own writes; it carries the admin grants. */
+async function seedActor(user: Awaited<ReturnType<typeof createAccount>>): Promise<Actor> {
+  const roles = await listRoles();
+  const adminRole = roles.find((role) => role.key === "admin");
+  const permissions = await permissionKeysForUser(user.id);
   return {
-    user: {
-      ...user,
-      status: "active",
-      emailVerified: true,
-      passwordHash: null,
-      twoFactorSecret: null,
-      twoFactorEnabled: false,
-      lastSignInAt: null,
+    user,
+    session: {
+      id: "00000000-0000-0000-0000-000000000000",
+      token: "seed",
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      ipAddress: null,
+      userAgent: "seed",
+      stepUpUntil: new Date(Date.now() + 60_000),
       createdAt: new Date(),
       updatedAt: new Date(),
     },
-    sessionId: "seed",
+    roles: adminRole ? [adminRole] : [],
+    permissions: new Set(permissions),
     stepUpValid: true,
   };
 }
 
 export async function seedIfEmpty(): Promise<void> {
+  // The catalogue and the three system roles exist on every boot, whether or
+  // not the demo content does.
+  await syncRbacCatalog();
   const [existing] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
   if ((existing?.count ?? 0) > 0) return;
 
   /* ------------------------------ staff ------------------------------ */
 
-  const passwordHash = hashPassword(DEMO_PASSWORD_VALUE);
-  const [admin] = await db
-    .insert(users)
-    .values({
-      name: "Dana Whitlock",
-      email: "admin@trofeo.example",
-      role: "admin",
-      emailVerified: true,
-      passwordHash,
-    })
-    .returning();
-  const [editor] = await db
-    .insert(users)
-    .values({
-      name: "Marco Silva",
-      email: "editor@trofeo.example",
-      role: "editor",
-      emailVerified: true,
-      passwordHash,
-    })
-    .returning();
-  await db.insert(users).values({
+  const roles = await listRoles();
+  const roleId = (key: string) => {
+    const role = roles.find((candidate) => candidate.key === key);
+    if (!role) throw new Error(`The ${key} role is missing.`);
+    return role.id;
+  };
+
+  const admin = await createAccount({
+    name: "Dana Whitlock",
+    email: "admin@trofeo.example",
+    password: DEMO_PASSWORD_VALUE,
+    roleIds: [roleId("admin")],
+    mustChangePassword: false,
+  });
+  const editor = await createAccount({
+    name: "Marco Silva",
+    email: "editor@trofeo.example",
+    password: DEMO_PASSWORD_VALUE,
+    roleIds: [roleId("editor")],
+    mustChangePassword: false,
+  });
+  await createAccount({
     name: "Priya Raman",
     email: "viewer@trofeo.example",
-    role: "viewer",
-    emailVerified: true,
-    passwordHash,
+    password: DEMO_PASSWORD_VALUE,
+    roleIds: [roleId("viewer")],
+    mustChangePassword: false,
   });
 
   const inviteToken = newToken(24);
   await db.insert(staffInvites).values({
     email: "new.starter@trofeo.example",
-    role: "editor",
+    roleId: roleId("editor"),
     tokenHash: hashToken(inviteToken),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     invitedBy: admin.id,
   });
 
-  const actor = adminActor(admin);
+  const actor = await seedActor(admin);
 
   /* ------------------------------- site ------------------------------- */
 
@@ -714,7 +720,7 @@ export async function seedIfEmpty(): Promise<void> {
     siteId: site.id,
     filename: "neon-fruits-lander.html",
     bytes: sample,
-    actor: adminActor(editor),
+    actor: await seedActor(editor),
   });
 
   /* ------------------------------ settings ------------------------------ */
