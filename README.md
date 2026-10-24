@@ -39,6 +39,7 @@ Environment variables (all optional in development):
 | `R2_PUBLIC_BASE_URL` | — | Public bucket domain used to build asset URLs. |
 | `PLATFORM_DOMAIN` | `pages.trofeo.test` | Suffix for generated platform subdomains. |
 | `ALLOW_HOST_FALLBACK` | `true` | Serve the first active site when a host is unknown (preview environments). Set `false` in production so an unknown host 404s. |
+| `PGLITE_AUTO_RECOVER` | `true` | If an embedded database directory is unreadable after an unclean shutdown, move it aside and rebuild from the migrations + seed. Set `false` to make the failure fatal instead. |
 
 Media storage is one contract (`lib/media/storage.ts`) with two backends. With the `R2_*` variables
 present, uploads go straight from the browser to the bucket through a presigned PUT; without them the
@@ -229,7 +230,11 @@ tests/                            vitest suites (lifecycle, pages, media, retent
   reference check) and Drizzle schema are the production ones; only the transport differs. PGlite
   allows one writer per directory, so `lib/db` records its pid next to the data and clears a dead
   owner's lock on the next start; SIGTERM/SIGINT close the database before the process exits, which
-  is what keeps the directory healthy across dev-server restarts.
+  is what keeps the directory healthy across dev-server restarts. A process killed mid-write (a
+  container stop, a hard config reload) can still leave an unreadable directory, so the next start
+  quarantines it to `<dir>.unreadable-<timestamp>`, rebuilds from the migrations plus seed and logs
+  one line about it. The demo data is reproducible, so this trade is deliberate; production points
+  at real Postgres.
 - **Soft delete first, purge later.** A site delete is reversible for 30 days by design: the purge is
   a queued job that re-checks the row, so a restore always wins. Purging a live site is refused.
 - **In-process cache instead of Valkey.** `lib/cache.ts` keeps the key shapes (`dom:`, `page:`,

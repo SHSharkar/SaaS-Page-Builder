@@ -1,7 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as schema from "./schema";
 
@@ -39,17 +39,20 @@ function isRunning(pid: number): boolean {
 /**
  * PGlite keeps a `postmaster.pid` inside its data directory. A process that is
  * killed without closing the database leaves that file behind, and the next
- * start aborts on `CREATE SCHEMA` instead of recovering. We therefore record
- * our own pid: if the previous owner is gone, both files are stale and are
- * cleared before opening; if it is still alive we leave them alone, because
- * two writers on one directory is exactly what the lock is for.
+ * start aborts instead of recovering. We therefore record our own pid: if the
+ * previous owner is gone, both files are stale and are cleared before opening;
+ * if it is still alive we refuse, because two writers on one directory is
+ * exactly what the lock is for.
  */
 function clearStaleLock(): void {
-  const owned = existsSync(lockPath);
-  if (owned) {
+  if (existsSync(lockPath)) {
     const previous = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
-    // A live owner keeps the directory. Two writers would corrupt it.
-    if (Number.isFinite(previous) && previous !== process.pid && isRunning(previous)) return;
+    if (Number.isFinite(previous) && previous !== process.pid && isRunning(previous)) {
+      throw new Error(
+        `The database at ${dataDir} is open in process ${previous}. ` +
+          "Stop that process (the dev server) before opening it here.",
+      );
+    }
     rmSync(lockPath, { force: true });
   }
   // No recorded owner (or a dead one): any postmaster.pid left in the tree is
@@ -78,21 +81,77 @@ function hookShutdown(): void {
   process.once("beforeExit", () => rmSync(lockPath, { force: true }));
 }
 
-function client(): PGlite {
-  if (!g.__trofeoClient) {
-    mkdirSync(dataDir, { recursive: true });
-    clearStaleLock();
-    g.__trofeoClient = new PGlite(dataDir);
-    writeFileSync(lockPath, String(process.pid));
-    hookShutdown();
-  }
-  return g.__trofeoClient;
+function open(): Db {
+  mkdirSync(dataDir, { recursive: true });
+  clearStaleLock();
+  g.__trofeoClient = new PGlite(dataDir);
+  const instance = drizzle(g.__trofeoClient, { schema });
+  writeFileSync(lockPath, String(process.pid));
+  hookShutdown();
+  return instance;
 }
 
-export const db: Db = (() => {
-  if (!g.__trofeoDb) g.__trofeoDb = drizzle(client(), { schema });
-  return g.__trofeoDb;
-})();
+/** Forgets the current handle so the next touch opens the directory again. */
+async function discard(): Promise<void> {
+  try {
+    await g.__trofeoClient?.close();
+  } catch {
+    /* already gone */
+  }
+  g.__trofeoDb = undefined;
+  g.__trofeoClient = undefined;
+  rmSync(lockPath, { force: true });
+}
+
+/**
+ * `db` is a thin proxy rather than a captured handle so a wedged database can
+ * be replaced without the hundred modules that import it caring. Everything
+ * else in the app talks to this object exactly as before.
+ */
+export const db: Db = new Proxy({} as Db, {
+  get(_target, property) {
+    if (!g.__trofeoDb) g.__trofeoDb = open();
+    const instance = g.__trofeoDb;
+    const value = Reflect.get(instance as object, property, instance) as unknown;
+    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(instance) : value;
+  },
+  has(_target, property) {
+    if (!g.__trofeoDb) g.__trofeoDb = open();
+    return Reflect.has(g.__trofeoDb as object, property);
+  },
+});
+
+function looksCorrupt(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}` : String(error);
+  return /Aborted\(\)|database is starting up|could not open file|invalid checkpoint/i.test(message);
+}
+
+/**
+ * Moves an unreadable directory aside so the next start is clean, and says so
+ * loudly. The alternative — a dev server that refuses to boot every time it was
+ * killed mid-write — is worse for a demo build whose data is reproducible from
+ * the seed.
+ */
+function quarantine(): string {
+  const aside = `${dataDir}.unreadable-${Date.now()}`;
+  try {
+    renameSync(dataDir, aside);
+  } catch {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+  return aside;
+}
+
+async function migrateAndSeed(): Promise<void> {
+  await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+  const { seedIfEmpty } = await import("@/lib/seed");
+  g.__trofeoSeeding = true;
+  try {
+    await seedIfEmpty();
+  } finally {
+    g.__trofeoSeeding = false;
+  }
+}
 
 /**
  * Runs the shipped migrations once per process, then the seed on an empty
@@ -105,13 +164,17 @@ export function ensureDb(): Promise<void> {
   if (g.__trofeoSeeding) return Promise.resolve();
   if (!g.__trofeoReady) {
     g.__trofeoReady = (async () => {
-      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
-      const { seedIfEmpty } = await import("@/lib/seed");
-      g.__trofeoSeeding = true;
       try {
-        await seedIfEmpty();
-      } finally {
-        g.__trofeoSeeding = false;
+        await migrateAndSeed();
+      } catch (error) {
+        if (!looksCorrupt(error) || process.env.PGLITE_AUTO_RECOVER === "false") throw error;
+        const aside = quarantine();
+        await discard();
+        console.warn(
+          `[db] PGlite could not read ${dataDir} (unclean shutdown). The old directory was kept at ${aside}; ` +
+            "a fresh database has been created and seeded.",
+        );
+        await migrateAndSeed();
       }
     })().catch((error) => {
       g.__trofeoReady = undefined;
