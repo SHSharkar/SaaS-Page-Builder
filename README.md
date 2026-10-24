@@ -41,6 +41,8 @@ Environment variables (all optional in development):
 | `PLATFORM_DOMAIN` | `pages.trofeo.test` | Suffix for generated platform subdomains. |
 | `BETTER_AUTH_URL` | `http://localhost:3000` | Public origin Better Auth signs cookies for. The sandbox preview hosts are trusted as well. |
 | `BETTER_AUTH_SECRET` | dev default | Signing secret for sessions. Set a long random value in production. |
+| `PASSKEY_RP_ID` | host of `BETTER_AUTH_URL` | WebAuthn relying-party id (the bare hostname). Set it to the preview host when testing passkeys behind a tunnel. |
+| `PASSKEY_ORIGIN` | origin of `BETTER_AUTH_URL` | Exact origin the browser will assert during a passkey ceremony. |
 | `ALLOW_HOST_FALLBACK` | `true` | Serve the first active site when a host is unknown (preview environments). Set `false` in production so an unknown host 404s. |
 | `PGLITE_AUTO_RECOVER` | `true` | If an embedded database directory is unreadable after an unclean shutdown, move it aside and rebuild from the migrations + seed. Set `false` to make the failure fatal instead. |
 
@@ -58,6 +60,10 @@ Password for all three: **`TrofeoDemo2026`** (prefilled on the sign-in screen).
 | `admin@trofeo.example` | admin | Everything, including sites, staff, domains and platform settings |
 | `editor@trofeo.example` | editor | Build, publish, import, upload media |
 | `viewer@trofeo.example` | viewer | Read-only access to pages and history |
+
+Register a passkey on `/account` while signed in, then use **Sign in with a passkey** on the sign-in
+screen for the second sign-in onwards. Bans, role changes and password resets are on `/admin/team`;
+they are also the fastest way to see the rank ceiling refuse an action.
 
 The seeded site is **Trofēo Reward** (`/`, `/rewards/wallet`, `/bonus-terms`) with a custom domain
 awaiting verification, a pending invitation for `new.starter@trofeo.example`, three curated
