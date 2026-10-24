@@ -1,25 +1,31 @@
 import Link from "next/link";
-import { requireActor, primaryRole } from "@/lib/auth/session";
+import { requireActor, primaryRole, can } from "@/lib/auth/session";
 import { listSites } from "@/lib/sites";
 import { signOutAction } from "@/lib/actions/auth";
 import { MobileNav, SidebarNav, type NavItem } from "@/components/admin/nav";
 
 export const dynamic = "force-dynamic";
 
-const NAV: NavItem[] = [
+/**
+ * Each destination names the permission that opens it, so the sidebar shows
+ * exactly what the actor can reach. The guards on the pages themselves are what
+ * enforce it; this just avoids offering doors that will not open.
+ */
+const NAV: (NavItem & { permission?: string })[] = [
   { href: "/admin", label: "Overview", exact: true },
-  { href: "/admin/sites", label: "Sites" },
-  { href: "/admin/templates", label: "Templates" },
-  { href: "/admin/components", label: "Component library" },
-  { href: "/admin/team", label: "Team" },
-  { href: "/admin/roles", label: "Roles & permissions" },
-  { href: "/admin/audit", label: "Audit log" },
-  { href: "/admin/settings", label: "Platform settings" },
+  { href: "/admin/sites", label: "Sites", permission: "site.view" },
+  { href: "/admin/templates", label: "Templates", permission: "template.view" },
+  { href: "/admin/components", label: "Component library", permission: "catalog.view" },
+  { href: "/admin/team", label: "Team", permission: "staff.view" },
+  { href: "/admin/roles", label: "Roles & permissions", permission: "role.view" },
+  { href: "/admin/audit", label: "Audit log", permission: "audit.view" },
+  { href: "/admin/settings", label: "Platform settings", permission: "settings.view" },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const actor = await requireActor();
   const sites = await listSites();
+  const nav = NAV.filter((item) => !item.permission || can(actor, item.permission));
 
   return (
     <div className="admin-body min-h-screen lg:grid lg:grid-cols-[248px_1fr]">
@@ -62,7 +68,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
         </div>
 
-        <SidebarNav items={NAV} />
+        <SidebarNav items={nav} />
 
         <div className="mt-auto rounded-lg border border-white/10 p-3">
           <p className="text-[12px] font-semibold text-white/90">{actor.user.name}</p>
@@ -100,7 +106,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               </button>
             </form>
           </div>
-          <MobileNav items={NAV} />
+          <MobileNav items={nav} />
         </div>
 
         <main className="px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
