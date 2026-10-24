@@ -1,324 +1,89 @@
-# Trofēo Pages
+# Trofeo Pages
 
-An internal, invite-only page builder for the Trofēo team: staff compose landing pages from a
-code-defined component library, edit site-wide navigation and footer once, and publish immutable
-snapshots that can be rolled back. Pages render from the same registry the editor uses, so a
-component cannot look right in the editor and wrong for a visitor.
+Trofeo Pages is an internal, invite-only multi-site landing page builder and publishing platform built on a self-hostable open-source stack. Staff compose landing pages from a code-owned catalog of 35 structured blocks, manage site-wide navigation, footer, and default SEO once per property, verify custom domains with on-demand TLS gating, import and review raw HTML pages, and publish immutable snapshots with instant rollback.
 
-The build follows the six supplied documents (PRD, architecture, ADRs, design system, security
-review, roadmap). Where a decision was open, the implementation note says which way it went.
+## Technology Stack
 
----
+- Runtime and framework: Next.js 16 App Router (`next@16.4.3`), React 19 (`react@19.3.1`), TypeScript 6 (`typescript@6.0.3`), and Next.js `proxy.ts` security header and route framing guard.
+- Styling and UI: Tailwind CSS v4 (`@tailwindcss/postcss@4.3.3`) configured exclusively through `@import "tailwindcss";` and `@theme` tokens in `app/globals.css`, paired with `class-variance-authority`, `clsx`, `tailwind-merge`, and `lucide-react`.
+- Visual editor: Puck (`@puckeditor/core@0.23.0`) backed by a single code-owned block registry in `lib/registry` shared between the editor canvas, staff preview routes, and zero-editor public server rendering.
+- Database: PostgreSQL via `pg` (`pg@8.23.1`) and Drizzle ORM (`drizzle-orm@0.45.4`, `drizzle-kit@0.31.11`) with 23 enum-free tables and partial unique indexes, plus embedded PGlite (`@electric-sql/pglite@0.5.11`) for zero-dependency local development and test suites when `DATABASE_URL` is unset.
+- Cache and rate limiting: Valkey / Redis via `ioredis` (`ioredis@6.0.0`) with an automatic in-memory fallback when `VALKEY_URL` is not configured.
+- Background jobs: `pg-boss` (`pg-boss@12.38.0`) standalone worker (`scripts/worker.ts`) for scheduled publish, scheduled unpublish, domain DNS verification, HTML import processing, site purge, and daily cleanup sweeps.
+- Identity and authorization: Better Auth (`better-auth@1.7.12`, `@better-auth/drizzle-adapter@1.7.12`, `@better-auth/passkey@1.7.12`) with NFKC-normalized Argon2id (`@node-rs/argon2@2.2.2`), WebAuthn passkeys, TOTP two-factor authentication (`otpauth@9.5.2`) with encrypted backup codes, 10-minute password step-up confirmation, single-use hashed staff invitations, and a 44-permission rank-ceiling RBAC matrix.
+- Object storage: AWS SDK v3 (`@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`) supporting Cloudflare R2 or any S3-compatible bucket via presigned PUT uploads, with verified local filesystem fallback (`MEDIA_DIR`), magic-byte MIME sniffing, SVG sanitization, SHA-256 deduplication, and reference-checked deletion.
+- Observability and API errors: Pino (`pino@10.4.0`) structured JSON logging with sensitive-key redaction, RFC 9457 `application/problem+json` error responses with `X-Request-Id`, `Retry-After`, and `Allow` headers, and `/api/health` readiness probes.
 
-## Running it
+## Getting Started
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run db:migrate
+npm run db:seed
+npm run dev
 ```
 
-There is nothing to provision. The database is PostgreSQL compiled to WebAssembly (PGlite),
-migrated and seeded automatically on first boot:
+When `DATABASE_URL` is set, the application connects to PostgreSQL and expects migrations and seed data to be applied explicitly via `npm run db:migrate` and `npm run db:seed` rather than during server boot. When `DATABASE_URL` is omitted in local development or tests, the runtime uses embedded PGlite under `PGLITE_DIR` (`./data/pg` by default).
 
-- `npm run db:migrate` — apply the shipped migrations, then seed a fresh database
-- `npm run seed` — seed demo content (idempotent; existing data is never overwritten)
-- `npm run typecheck` — `tsc --noEmit`
-- `npm test` — the vitest suite (state machines, publishing, media, retention, rendering, catalog,
-  access control)
-- `npx tsx scripts/smoke.ts` — exercise the data layer end to end against a throwaway database
+## Scripts
 
-Environment variables (all optional in development):
+- `npm run dev` starts the Next.js development server on default port 3000.
+- `npm run build` compiles the production Next.js bundle.
+- `npm run start` starts the production Next.js server.
+- `npm run worker` runs the standalone `pg-boss` background job worker (`scripts/worker.ts`).
+- `npm run db:generate` generates SQL migrations from `lib/db/schema.ts` into `drizzle/`.
+- `npm run db:migrate` applies pending SQL migrations (`scripts/migrate.ts`).
+- `npm run db:seed` seeds the RBAC catalog, component definitions, platform settings, demo staff accounts, and sample site (`scripts/seed.ts`).
+- `npm run smoke` runs end-to-end service-layer smoke checks against an isolated database (`scripts/smoke.ts`).
+- `npm run typecheck` runs `tsc --noEmit` across application, script, and test sources.
+- `npm run lint` runs ESLint 10 across the repository.
+- `npm test` runs the Vitest suite across auth, RBAC, state machines, publishing, media, sweeper, rendering, registry, and platform security guards.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PGLITE_DIR` | `./data/pg` | Database directory. Point at a real Postgres by swapping the driver in `lib/db`. |
-| `MEDIA_DIR` | `./data/media` | Where uploaded bytes live when R2 is not configured. |
-| `R2_ACCOUNT_ID` | — | Cloudflare account id. Setting the five R2 variables switches media storage to the bucket. |
-| `R2_ACCESS_KEY_ID` | — | R2 token key id. |
-| `R2_SECRET_ACCESS_KEY` | — | R2 token secret. |
-| `R2_BUCKET` | — | Bucket name for site media. |
-| `R2_PUBLIC_BASE_URL` | — | Public bucket domain used to build asset URLs. |
-| `PLATFORM_DOMAIN` | `pages.trofeo.test` | Suffix for generated platform subdomains. |
-| `BETTER_AUTH_URL` | `http://localhost:3000` | Public origin Better Auth signs cookies for. The sandbox preview hosts are trusted as well. |
-| `BETTER_AUTH_SECRET` | dev default | Signing secret for sessions. Set a long random value in production. |
-| `PASSKEY_RP_ID` | host of `BETTER_AUTH_URL` | WebAuthn relying-party id (the bare hostname). Set it to the preview host when testing passkeys behind a tunnel. |
-| `PASSKEY_ORIGIN` | origin of `BETTER_AUTH_URL` | Exact origin the browser will assert during a passkey ceremony. |
-| `ALLOW_HOST_FALLBACK` | `true` | Serve the first active site when a host is unknown (preview environments). Set `false` in production so an unknown host 404s. |
-| `PGLITE_AUTO_RECOVER` | `true` | If an embedded database directory is unreadable after an unclean shutdown, move it aside and rebuild from the migrations + seed. Set `false` to make the failure fatal instead. |
+## Environment Variables
 
-Media storage is one contract (`lib/media/storage.ts`) with two backends. With the `R2_*` variables
-present, uploads go straight from the browser to the bucket through a presigned PUT; without them the
-same flow writes to `MEDIA_DIR` through our own route. Either way the server re-reads the bytes and
-verifies type and checksum before the asset becomes usable.
+- `DATABASE_URL`: PostgreSQL connection string (`postgres://...`). Required in production unless `ALLOW_EMBEDDED_DB=true`.
+- `DATABASE_POOL_MAX`: Maximum connections in the PostgreSQL pool (defaults to `10`).
+- `PGLITE_DIR`: Directory path or `memory://` target for embedded PGlite in local development and tests (defaults to `./data/pg`).
+- `VALKEY_URL`: Valkey or Redis URL (`redis://...`) for shared caching and sliding-window rate limits.
+- `BETTER_AUTH_SECRET`: Secret key (minimum 32 characters) used by Better Auth to sign session cookies.
+- `BETTER_AUTH_URL`: Canonical origin URL for authentication callbacks and WebAuthn ceremonies (defaults to `http://localhost:3000` in development).
+- `PASSKEY_RP_ID`: Relying-party hostname for WebAuthn passkeys (defaults to the hostname of `BETTER_AUTH_URL`).
+- `PASSKEY_ORIGIN`: Allowed origin for WebAuthn passkey ceremonies (defaults to the origin of `BETTER_AUTH_URL`).
+- `SETTINGS_ENCRYPTION_KEY`: Key material (minimum 16 characters, HKDF-SHA256 derived to 256 bits) used for AES-256-GCM encryption of secret values in `platform_setting`.
+- `PLATFORM_DOMAIN`: Base suffix for generated site subdomains (defaults to `pages.trofeo.test`).
+- `ALLOW_HOST_FALLBACK`: When `true` in local preview environments, unknown `Host` headers fall back to the first active site; set `false` in production so unknown hosts return 404.
+- `INTERNAL_TLS_CHECK_TOKEN`: Optional bearer token required by `GET /api/internal/tls-check?domain=...` when Caddy queries certificate eligibility.
+- `MEDIA_DIR`: Local directory storing uploaded media blobs when S3 / R2 credentials are not configured (defaults to `./data/media`).
+- `S3_ENDPOINT` or `R2_ACCOUNT_ID`: Object storage endpoint or Cloudflare account identifier enabling presigned PUT uploads.
+- `S3_BUCKET` or `R2_BUCKET`: Bucket name for uploaded media objects.
+- `S3_ACCESS_KEY_ID` or `R2_ACCESS_KEY_ID`: Object storage access key identifier.
+- `S3_SECRET_ACCESS_KEY` or `R2_SECRET_ACCESS_KEY`: Object storage secret access key.
+- `S3_PUBLIC_BASE_URL` or `R2_PUBLIC_BASE_URL`: Public CDN or bucket base URL for serving ready media objects.
+- `LLM_ADAPTER`: Optional HTML import classification adapter (`none` by default).
 
-## Demo accounts
+## Demo Staff Accounts
 
-Password for all three: **`TrofeoDemo2026`** (prefilled on the sign-in screen).
+Running `npm run db:seed` provisions three demo accounts sharing the password `TrofeoDemo2026!`:
 
-| Account | Role | Can do |
-| --- | --- | --- |
-| `admin@trofeo.example` | admin | Everything, including sites, staff, domains and platform settings |
-| `editor@trofeo.example` | editor | Build, publish, import, upload media |
-| `viewer@trofeo.example` | viewer | Read-only access to pages and history |
+- `admin@trofeo.example` (`admin`, rank 100): Full platform access across sites, pages, custom domains, raw HTML and embed blocks, staff invitations, custom roles, settings, and operations.
+- `editor@trofeo.example` (`editor`, rank 50): Creates and edits drafts, publishes snapshots, manages site globals, uploads media, applies templates, and reviews HTML imports.
+- `viewer@trofeo.example` (`viewer`, rank 10): Read-only access to sites, pages, version history, global content, domains, templates, and the component catalog.
 
-Register a passkey on `/account` while signed in, then use **Sign in with a passkey** on the sign-in
-screen for the second sign-in onwards. Bans, role changes and password resets are on `/admin/team`;
-they are also the fastest way to see the rank ceiling refuse an action.
+## Core Capabilities
 
-The seeded site is **Trofēo Reward** (`/`, `/rewards/wallet`, `/bonus-terms`) with a custom domain
-awaiting verification, a pending invitation for `new.starter@trofeo.example`, three curated
-templates and a second published version of the homepage so rollback has something to restore.
+- Multi-site routing and on-demand TLS: Visitors are routed by `Host` header and path to the active site's published `page_version` snapshot without loading editor JavaScript. Unknown hosts, suspended sites, unpublished drafts, and archived pages return a uniform 404 response. `GET /api/internal/tls-check?domain=...` returns HTTP 200 only when both the domain and its parent site are active, preventing certificate issuance for unverified or suspended hostnames.
+- Optimistic locking and immutable snapshots: Page and global content drafts enforce a 200 KB JSONB ceiling (`schemaVersion` first) and compare `lock_version` on every save so concurrent edits never overwrite each other silently. Publishing records an immutable `page_version` snapshot, retains the newest 50 versions plus whichever snapshot is currently live, and supports instant rollback as a new version. A partial unique index (`page_one_homepage_idx`) guarantees one active homepage per site.
+- Component catalog: 35 code-owned blocks (27 Launch and 8 Wave-2) organized under `site-frame`, `conversion`, `money`, `content`, and `utility`. All blocks share normalized appearance tokens (background, spacing, width, alignment, device visibility, and anchor ID) and validate on the server before saving or publishing. Raw HTML (`raw-html`) and iframe (`embed`) blocks require the `catalog.admin_blocks` permission.
+- Media pipeline and reference tracking: Uploads support presigned PUT to S3 / R2 or direct local upload, capped at 10 MB per file and 60 uploads per actor per hour. Confirmation verifies magic bytes, sanitizes SVG markup, deduplicates by SHA-256 content hash, extracts image dimensions, and tracks usage in `media_reference` across page drafts, published versions, global headers and footers, site themes, and templates so referenced assets cannot be deleted accidentally.
+- SSRF-guarded HTML importer: Staff upload or paste HTML (up to 5 MB, 20 imports per day) for Cheerio structural segmentation into candidate blocks. Remote asset fetches enforce DNS and IP range validation blocking loopback, RFC 1918 private networks, link-local addresses, and cloud metadata endpoints (`169.254.169.254` and IPv6 equivalents). Reviewers accept, remap, skip, or (if authorized) keep sections as `raw-html` to produce an unpublished draft page.
+- Security and lifecycle governance: Every entity (`site`, `page`, `domain`, `import`, `media`, `invite`, and `template`) transitions exclusively through `assertTransition` in `lib/lifecycle.ts`. Sensitive mutations require a fresh 10-minute password step-up window (`428 Precondition Required`), role rank ceilings prevent privilege escalation, the last active administrator cannot be demoted or banned, and `runDailyCleanup` in `lib/sweeper.ts` purges expired trash, unconfirmed uploads, old import jobs, and expired sessions.
 
----
+## Repository Structure
 
-## What is implemented
-
-**Editing.** Puck 0.23 is embedded behind one adapter (`components/editor/puck-config.tsx`). The 35
-components come from `lib/registry`; each definition carries its own field schema, defaults, style
-controls and render function, and the server re-validates every save against the same schema, so an
-unknown or malformed component can never reach a document.
-
-**Publishing.** A page has a draft and an immutable `page_version` snapshot. Publishing validates,
-writes the snapshot, points `current_published_version_id` at it and clears the cache in the same
-request. Rollback republishes an old snapshot as a *new* version — history is never rewritten. The
-last 50 snapshots per page are kept. Saves carry `lock_version`; a stale save is refused rather than
-silently overwriting another editor. One published homepage per site is enforced by a partial unique
-index as well as in code.
-
-**Site globals.** Navigation, footer and default search tags are edited once per site, with their
-own drafts and their own publish step.
-
-**Media.** Uploads are two-staged: `POST /api/sites/{id}/media/presign` creates a `pending` row and a
-presigned PUT (or a null URL on the local backend), the bytes move, and
-`POST /api/sites/{id}/media/{mediaId}/confirm` re-reads what landed, checks the magic bytes against
-the declared type, verifies the SHA-256 the browser sends, deduplicates by content hash, renames the
-object to that hash and only then flips the row to `ready`. Unconfirmed uploads are swept after 24
-hours. Files are capped at 5 MB and 60 uploads per staff member per hour. Documents store media
-*identifiers*, never URLs, so the reference check before deletion is exact: a draft, a snapshot, a
-global or a staff template that still names the asset blocks the delete.
-
-**Hostnames.** `domain` rows drive serving. A hostname is `pending` until its TXT record verifies,
-then `active`; removing it stops serving immediately and clears the cache. Platform subdomains are
-created automatically. Certificates are gated on that row (the "answer C" path in Q-004): no
-certificate is issued for a hostname that has not verified.
-
-**Public rendering.** Hostname → site → page → published snapshot, rendered through the registry.
-Unknown host, unknown path, unpublished page and suspended site all produce the *same* 404. Pages
-get per-page titles, descriptions, canonical URLs, share tags, optional noindex, `sitemap.xml` and
-`robots.txt` per host. Staff previews are noindex, never cached, and show the draft.
-
-**Imports.** Upload one HTML file (5 MB, 20 per staff member per day). The analyser maps sections to
-components deterministically and records confidence, the reason, and everything it could not map.
-Nothing is created until a human reviews the mapping and applies it; the result is an unpublished
-draft. The same screen lets a reviewer remap a section to a different component, edit its copy, or
-drop it.
-
-**Templates.** Three curated designs built from the component library, plus staff templates saved
-from any page. Tokens written as `{{token}}` become fill-in fields at creation time; applying a
-template copies the document, so later edits never change the template.
-
-**Identity.** Authentication is [Better Auth](https://better-auth.com) 1.7.12 behind
-`/api/auth/[...all]`: it owns `user`, `account` (the password is a credential row), `session`,
-`verification`, `two_factor` and `passkey`. Passwords are hashed with Argon2id (`@node-rs/argon2`,
-19 MiB / 2 passes) through the `emailAndPassword.password` hooks, so the library and the app agree on
-one hasher. Public sign-up is disabled (`disableSignUp`), so accounts exist only because an admin
-created one or an invitation was accepted. Sign-in is rate limited through Better Auth's own database
-store, so the limit survives a restart and would survive a second instance.
-
-**Staff management is the admin plugin.** `better-auth/plugins/admin` supplies the `user.role`,
-`banned`, `banReason`, `banExpires` columns, `session.impersonatedBy`, and the endpoints the team
-screen calls: `createUser`, `setRole`, `banUser` / `unbanUser`, `setUserPassword`,
-`revokeUserSessions`, `impersonateUser` / `stopImpersonating` and `removeUser`. The plugin checks
-"does this caller hold the admin role", which is not a rank ceiling, so every app call wraps it in
-`assertRoleCeiling`: nobody can create, edit, ban or impersonate an account whose role ranks at or
-above their own, and the last active Administrator can never be demoted, banned or deleted.
-
-**Passkeys.** `@better-auth/passkey` adds the `passkey` table and the WebAuthn ceremonies. Staff
-register a passkey on `/account` and sign in with it from `/sign-in`; the credential never leaves the
-authenticator. Two-factor (TOTP) still applies on top.
-
-**Authorization.** One role per person: `user.role` stores the role *key*, and `role`,
-`permission` and `role_permission` are the catalogue the app owns. Nothing compares a role *name* to
-a string. `lib/auth/permissions.ts` defines the 40-key catalogue (what a capability *means*, grouped
-and flagged when dangerous); `lib/auth/rbac.ts` owns the tables, `syncRbacCatalog()` keeps the
-catalogue in lockstep on boot, and every server action calls `requirePermission(key)`, which is
-deny-by-default and treats an unknown key as a programmer error. `/admin/roles` is a live matrix
-editor: create a role with a rank, tick capabilities, pick it on `/admin/team`, and the next request
-respects it (permissions are re-read per request, not cached in the cookie). The Administrator role
-always holds the whole catalogue; Editor and Viewer are seeded once and can then be narrowed without
-the next boot undoing it.
-
-Sensitive acts (role changes, bans, deletions, domains, role edits) require *step-up*:
-`requireStepUp` answers 428 until the session refreshes its confirmation, which the team, roles and
-account screens do inline with the current password for a ten-minute window. Sessions are listed on
-`/account` and revocable per device; banning an account ends its sessions immediately and the ban
-check runs on every request *and* on every new session. `server.ts` reads `stepUpUntil` from the
-database, so a stale cookie cannot claim freshness.
-
-**Operations.** Invite-only staff accounts, single-use invitations with a role attached (seven-day
-expiry, enforced on read as well as by the sweeper), admin-created accounts that must change their
-first password, single-use password-reset links stored as hashes in `verification`, optional TOTP
-two-factor, an append-only audit log, a database-backed job queue with dedupe keys and exponential
-backoff, scheduled publish and unpublish, and a platform settings screen (database > environment >
-default). The last active admin cannot be demoted or suspended: rank is checked before the write, and
-the refusal names the reason.
-
-**Lifecycles and retention.** Every status change goes through the state machines in
-`lib/lifecycle.ts` (`assertTransition`); an illegal move is a typed 409, not a silent write. The
-machines are:
-
-| Object | States |
-| --- | --- |
-| Page | `draft` ↔ `published` → `archived` → `draft` (a restored page comes back as a draft) |
-| Site | `active` ↔ `suspended` → `deleted` → `active` (restore) |
-| Domain | `pending` → `verifying` → `active` \| `failed` → `pending` \| `removed` |
-| Import | `uploaded` → `parsing` → `mapped` → `in_review` → `applied` \| `discarded` \| `failed` |
-| Media | `pending` → `ready` → `deleted` |
-| Invite | `pending` → `accepted` \| `revoked` \| `expired` |
-
-Deleting a site is two-staged. The site stops serving immediately, its domains are removed, the cache
-is cleared and rows are kept for a **30-day restore window** (`/admin/sites` → *Recently deleted* →
-Restore or Purge now). A daily queue job hard-deletes anything past the window; restoring cancels
-that purge because the job re-checks the row.
-
-One sweeper (`runDailyCleanup`, job kind `cleanup.daily`) owns every keep window, and running it twice
-changes nothing the second time:
-
-| Data | Kept |
-| --- | --- |
-| Audit log | 24 months |
-| Snapshots per page | 50 (oldest pruned, the live snapshot is never removed) |
-| Import jobs | 90 days |
-| Import source files | 12 months, and only once nothing references them |
-| Unconfirmed uploads | 24 hours |
-| Deleted sites | 30 days, then purged |
-| Removed hostnames | 90 days, then the name is free again |
-| Suspended sites | reviewed after 12 months |
-
-The counts and a *Run the sweeper now* button live on `/admin/settings`.
-
-## The component library
-
-35 definitions in five groups: `site-frame` (header, footer, announcement bar, sticky CTA),
-`conversion` (hero, promo banner, CTA banner, urgency strip, countdown, testimonial, trust badges),
-`money` (bonus grid, bonus table, jackpot, payout proof, gift-card grid, trophy rewards, VIP tiers),
-and `content` (rich text, image, carousel, video embed, cards, steps, features, FAQ, divider, logos,
-games grid, comparison) plus utility blocks.
-
-27 ship at launch and 8 more (`live-winners`, `vip-tiers`, `responsible-gaming`, `app-download`,
-`team-grid`, `timeline`, `image-gallery`, `schedule-table`) carry `wave: 2`, so the second wave is
-visible in the catalog and filterable without changing the editor. Browse them, with live previews
-and their field schemas, at `/admin/components`.
-
-Every component also supports the shared `appearance` controls (background, spacing, width,
-alignment, per-device visibility, anchor id), so layout rhythm is consistent without each component
-inventing its own.
-
-## Verified behaviour
-
-`scripts/smoke.ts` runs the real functions the server actions call, against a disposable database:
-
-```
-• sites and pages      validation, nested slugs, homepage rule, lock-version conflict,
-                       publish → v1, publish → v2, rollback → v3, unpublish
-• globals              navigation publish, default SEO round-trip
-• media                byte sniffing, checksum dedupe, reference-blocked delete
-• import review        analysis + apply produces an unpublished page
-• templates            curated templates exist and apply
-• domains              pending + TXT instruction, no false-positive verification
-• queue                a due job drains
-• archived pages       archive → publish refused (409) → restore as draft → unpublish refused
-• two-stage upload     pending row, presign presence, unconfirmed confirm refused, 5 MB cap
-• retention            second sweep is a no-op, keep windows, preview counts
-• site restore/purge   soft delete → restore → purge only when deleted
-```
-
-`npm test` covers the same promises at unit level (111 checks): every legal and illegal transition in
-all eight machines, `lock_version` refusals, one-homepage enforcement, snapshot immutability and
-pruning, media verification and dedupe, hostname resolution and the identical 404, metadata assembly,
-and a catalog pass that renders all 35 components from their defaults. `tests/auth.test.ts` adds the
-access layer: the catalogue is complete and unique, deny-by-default refusals carry 403, unknown
-permission keys are errors, step-up gaps carry 428, role assignment is replaced atomically and records
-its author, the last-admin count is real, custom roles are created/narrowed/deleted, and a narrowed
-Editor role survives a catalogue sync.
-
-The public routes, sitemap, robots, media route and every admin screen were also fetched over HTTP
-and checked for expected markup and status codes.
-
-## Layout
-
-```
-app/
-  [[...path]]/page.tsx            public renderer (host → site → page → snapshot)
-  preview/[siteId]/[[...path]]    staff-only, noindex draft preview
-  admin/…                         dashboard, sites, pages, globals, media, domains,
-                                  imports, settings, templates, components, team,
-                                  roles (permission matrix), audit
-  account/password                own password, forced first change, own sessions
-  reset/[token]                   single-use password reset
-  api/auth/[...all]               Better Auth endpoints (sign-in, sign-out, 2FA, session)
-  api/sites/[siteId]/media        upload (local backend), presign and confirm endpoints
-  edit/[siteId]/…                 Puck editor for pages and for global content
-  media/[file]/route.ts           immutable, hashed media bytes
-  sitemap.xml, robots.txt         per-host
-  api/sites/[siteId]/media        upload (local backend), presign and confirm endpoints
-lib/
-  registry/                       component definitions (the single source of truth)
-  lifecycle.ts retention.ts       state machines, keep windows, the daily sweeper
-  pages.ts globals.ts media.ts domains.ts templates.ts importer.ts
-  auth/                           Better Auth instance, RBAC tables, session guards, tokens
-  media/storage.ts                local | R2 behind one contract
-  render.tsx public-page.ts       public tree and metadata
-  cache.ts queue.ts audit.ts      Valkey-shaped cache, job queue, audit trail
-  actions/                        server actions — the only mutation surface
-components/
-  blocks/                         rendered sections
-  editor/                         Puck adapter, custom fields, editor chrome
-  admin/                          screens and client widgets
-drizzle/                          SQL migrations
-scripts/                          migrate, seed, smoke
-tests/                            vitest suites (auth and RBAC, lifecycle, pages, media,
-                                  retention, rendering, catalog)
-```
-
-## Decisions worth knowing
-
-- **Puck is an implementation detail.** Documents are stored as
-  `{ schemaVersion, root: { props }, content: [{ type, props }] }`. The public renderer walks that
-  tree directly, so visitor pages ship none of the editor.
-- **PGlite, not Postgres, in this build.** The SQL, JSONB queries (`jsonb_path_exists` for the media
-  reference check) and Drizzle schema are the production ones; only the transport differs. PGlite
-  allows one writer per directory, so `lib/db` records its pid next to the data and clears a dead
-  owner's lock on the next start; SIGTERM/SIGINT close the database before the process exits, which
-  is what keeps the directory healthy across dev-server restarts. A process killed mid-write (a
-  container stop, a hard config reload) can still leave an unreadable directory, so the next start
-  quarantines it to `<dir>.unreadable-<timestamp>`, rebuilds from the migrations plus seed and logs
-  one line about it. The demo data is reproducible, so this trade is deliberate; production points
-  at real Postgres.
-- **Soft delete first, purge later.** A site delete is reversible for 30 days by design: the purge is
-  a queued job that re-checks the row, so a restore always wins. Purging a live site is refused.
-- **In-process cache instead of Valkey.** `lib/cache.ts` keeps the key shapes (`dom:`, `page:`,
-  `site:`, `rl:`) and the rule that invalidation happens synchronously after commit; swapping in
-  ioredis is a single file.
-- **A database-backed queue instead of pg-boss.** Same semantics that matter here: unique dedupe
-  key, attempts, backoff of `min(5 min, 2^attempts s)`, and a worker that must actually run. A tick
-  runs every five seconds in-process and can be triggered from Platform settings.
-- **No outbound DNS in the sandbox**, so domain verification reports "recheck from production
-  resolver" rather than claiming success or failure it cannot know.
-- **Host fallback on** for preview environments: an unrecognised host serves the first active site
-  so the preview is usable. Set `ALLOW_HOST_FALLBACK=false` to get strict 404s.
-- **Invitations are shown once** as a copyable link; there is no mail transport in this build. The
-  accept screen, expiry and single-use rules are real. Password resets work the same way: the admin
-  gets a one-hour, single-use link to hand over.
-- **Better Auth owns identity, the app owns the authorization catalogue.** The admin plugin stores
-  which role key a person holds; the permissions that key grants live in the app's own tables, so a
-  role can be reshaped at run time without a deploy and no guard ever reads a role string.
-- **Permissions are re-read on every request** (`getActor` → `rolesForUser` + `permissionKeysForUser`)
-  and the session cookie carries no authorization claim, so revoking a role takes effect on the next
-  click instead of the next sign-in.
-
-## Out of scope (v1, per the documents)
-
-Billing, forms/lead capture, customer workspaces, real-time co-editing, multi-language content and
-customer-hosted video. Prompt-to-page is described but not wired to a model; the import analyser is
-deterministic so it can run with no external service.
+- `app/`: Next.js App Router public routes (`[[...path]]`), staff previews (`preview/`), visual editor routes (`edit/`), admin console (`admin/`), auth screens (`sign-in`, `two-factor`, `invite`, `reset-password`), per-host `sitemap.xml` and `robots.txt`, media delivery (`media/[file]`), and API endpoints (`api/auth`, `api/health`, `api/internal/tls-check`, `api/sites/[siteId]/media`).
+- `components/`: Shared UI primitives, centered modal dialogs, admin workflow panels, Puck editor adapter (`components/editor/`), and public block renderers (`components/blocks/`).
+- `lib/`: Domain services (`sites`, `pages`, `globals`, `domains`, `media`, `importer`, `templates`, `team`, `overview`, `settings`, `audit`, `sweeper`, `queue`, `cache`), Better Auth and RBAC (`lib/auth/`), Drizzle schema (`lib/db/`), block registry (`lib/registry/`), Server Actions (`lib/actions/`), AES-256-GCM encryption (`lib/crypto.ts`), Pino logger (`lib/logger.ts`), and RFC 9457 responses (`lib/problem.ts`).
+- `drizzle/`: Generated PostgreSQL migration SQL and metadata journal.
+- `scripts/`: Standalone CLI entry points for `migrate.ts`, `seed.ts`, `worker.ts`, and `smoke.ts`.
+- `tests/`: Vitest integration and unit suites covering RBAC, lifecycles, pages, media, rendering, registry, sweeper, and platform security guards.
+- `proxy.ts` and `instrumentation.ts`: Next.js 16 request header proxy and server boot hook.

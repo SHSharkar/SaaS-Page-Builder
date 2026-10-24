@@ -35,8 +35,9 @@ export async function signInAction(_prev: FormState, formData: FormData): Promis
   const password = String(formData.get("password") ?? "");
   const next = safeNext(formData.get("next"));
 
-  if (!consumeRateLimit(`sign-in:${email}`, 8, 300)) {
-    return { error: "Too many attempts. Wait five minutes before trying again." };
+  const limit = await consumeRateLimit("sign-in", email || "blank", 8, 300);
+  if (!limit.allowed) {
+    return { error: "Too many sign-in attempts. Wait five minutes before trying again." };
   }
 
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -86,16 +87,23 @@ export async function signInAction(_prev: FormState, formData: FormData): Promis
   redirect(next ?? "/admin");
 }
 
-export async function verifyTwoFactorAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function verifyTwoFactorAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   await ensureDb();
   const code = String(formData.get("code") ?? "").replace(/\s+/g, "");
   const next = safeNext(formData.get("next"));
-  if (!/^\d{6}$/.test(code)) return { error: "Enter the six-digit code." };
+  if (!code) return { error: "Enter your 6-digit code or backup code." };
 
   try {
-    await auth.api.verifyTOTP({ body: { code }, headers: await requestHeaders() });
+    if (/^\d{6}$/.test(code)) {
+      await auth.api.verifyTOTP({ body: { code }, headers: await requestHeaders() });
+    } else {
+      await auth.api.verifyBackupCode({ body: { code }, headers: await requestHeaders() });
+    }
   } catch {
-    return { error: "That code is not valid. Codes rotate every 30 seconds." };
+    return { error: "That code is not valid. Authenticator codes rotate every 30 seconds." };
   }
 
   const actor = await getActor();
@@ -127,7 +135,10 @@ export async function signOutAction(): Promise<void> {
   redirect("/sign-in");
 }
 
-export async function acceptInviteAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function acceptInviteAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   await ensureDb();
   const token = String(formData.get("token") ?? "");
   const name = String(formData.get("name") ?? "").trim();
@@ -153,14 +164,25 @@ export async function acceptInviteAction(_prev: FormState, formData: FormData): 
     .where(and(eq(staffInvites.tokenHash, hashToken(token)), eq(staffInvites.status, "pending")))
     .limit(1);
 
-  if (!invite) return { error: "That invitation link is not valid. Ask an admin to resend it." };
+  if (!invite) {
+    return { error: "That invitation link is not valid. Ask an administrator to resend it." };
+  }
   if (invite.expiresAt < new Date()) {
-    await db.update(staffInvites).set({ status: "expired" }).where(eq(staffInvites.id, invite.id));
-    return { error: "That invitation has expired. Ask an admin to send a fresh one." };
+    await db
+      .update(staffInvites)
+      .set({ status: "expired" })
+      .where(eq(staffInvites.id, invite.id));
+    return { error: "That invitation has expired. Ask an administrator to send a fresh one." };
   }
 
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, invite.email)).limit(1);
-  if (existing) return { error: "An account already exists for that email. Sign in instead." };
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, invite.email))
+    .limit(1);
+  if (existing) {
+    return { error: "An account already exists for that email. Sign in instead." };
+  }
 
   const user = await provisionAccount({
     name,
@@ -172,7 +194,12 @@ export async function acceptInviteAction(_prev: FormState, formData: FormData): 
 
   await db
     .update(staffInvites)
-    .set({ status: "accepted", acceptedBy: user.id, acceptedAt: new Date(), updatedAt: new Date() })
+    .set({
+      status: "accepted",
+      acceptedUserId: user.id,
+      acceptedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(eq(staffInvites.id, invite.id));
 
   await recordAudit({
@@ -183,7 +210,10 @@ export async function acceptInviteAction(_prev: FormState, formData: FormData): 
     targetId: invite.id,
   });
 
-  await auth.api.signInEmail({ body: { email: invite.email, password }, headers: await requestHeaders() });
+  await auth.api.signInEmail({
+    body: { email: invite.email, password },
+    headers: await requestHeaders(),
+  });
   redirect("/admin");
 }
 
@@ -207,7 +237,10 @@ export async function stepUpAction(_prev: FormState, formData: FormData): Promis
   return { ok: true, message: "Confirmed. You have ten minutes for sensitive changes." };
 }
 
-export async function changePasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function changePasswordAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const actor = await getActor();
   if (!actor) return { error: "Sign in first." };
   const currentPassword = String(formData.get("current") ?? "");
@@ -224,13 +257,15 @@ export async function changePasswordAction(_prev: FormState, formData: FormData)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (/invalid password/i.test(message)) return { error: "Your current password did not match." };
+    if (/invalid password/i.test(message)) {
+      return { error: "Your current password did not match." };
+    }
     return { error: "The password could not be changed." };
   }
 
   await db
     .update(users)
-    .set({ mustChangePassword: false, updatedAt: new Date() })
+    .set({ mustChangePassword: false, passwordChangedAt: new Date(), updatedAt: new Date() })
     .where(eq(users.id, actor.user.id));
   await recordAudit({
     action: "password_changed",
@@ -245,7 +280,8 @@ export async function changePasswordAction(_prev: FormState, formData: FormData)
 export async function requestPasswordResetAction(input: { email: string }): Promise<FormState> {
   await ensureDb();
   const email = input.email.trim().toLowerCase();
-  if (!consumeRateLimit(`reset:${email}`, 5, 600)) {
+  const limit = await consumeRateLimit("reset", email || "blank", 5, 600);
+  if (!limit.allowed) {
     return { error: "Too many reset requests. Try again later." };
   }
   try {
@@ -262,10 +298,16 @@ export async function requestPasswordResetAction(input: { email: string }): Prom
     actor: null,
     targetType: "user",
   });
-  return { ok: true, message: "A single-use reset link has been created. An admin can hand it over." };
+  return {
+    ok: true,
+    message: "If an account exists for that email, a single-use reset link has been created.",
+  };
 }
 
-export async function completePasswordResetAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function completePasswordResetAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   await ensureDb();
   const token = String(formData.get("token") ?? "");
   const newPassword = String(formData.get("password") ?? "");
@@ -273,12 +315,12 @@ export async function completePasswordResetAction(_prev: FormState, formData: Fo
   if (newPassword !== confirm) return { error: "The two passwords do not match." };
   const strength = checkPasswordStrength(newPassword);
   if (!strength.ok) return { error: strength.message };
-  if (!token) return { error: "That reset link is incomplete. Ask an admin for another." };
+  if (!token) return { error: "That reset link is incomplete. Ask an administrator for another." };
 
   try {
     await auth.api.resetPassword({ body: { token, newPassword } });
   } catch {
-    return { error: "That reset link is invalid or has expired. Ask an admin for another." };
+    return { error: "That reset link is invalid or has expired. Ask an administrator for another." };
   }
 
   await recordAudit({
@@ -337,3 +379,5 @@ export async function describeActor() {
   const actor = await getActor();
   return actor ? `${actor.user.name} (${roleLabels(actor)})` : "signed out";
 }
+
+export const inspectInviteToken = currentInvite;

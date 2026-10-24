@@ -10,7 +10,7 @@ import {
   collectDocumentMedia,
 } from "@/lib/registry";
 import { APPEARANCE_FIELDS, DEFAULT_APPEARANCE as APPEARANCE_DEFAULTS } from "@/lib/registry/types";
-import { newPageDocument } from "@/lib/pages";
+import { emptyDocument as newPageDocument } from "@/lib/documents";
 
 describe("catalog shape", () => {
   it("ships 27 launch blocks plus 8 in the second wave", () => {

@@ -1,4 +1,4 @@
-import type { PageDocument } from "@/lib/documents";
+import { migrateDocument, type PageDocument } from "@/lib/documents";
 
 export function withPuckIds(document: PageDocument): PageDocument {
   const id = () => globalThis.crypto.randomUUID();
@@ -25,4 +25,10 @@ export function withPuckIds(document: PageDocument): PageDocument {
         }
       : {}),
   };
+}
+
+export const toPuckData = withPuckIds;
+
+export function fromPuckData(data: unknown): PageDocument {
+  return migrateDocument(data);
 }

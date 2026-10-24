@@ -81,7 +81,7 @@ export function MediaField({
             onClick={() => inputRef.current?.click()}
             disabled={readOnly || busy}
           >
-            {busy ? "Uploading…" : "Upload"}
+            {busy ? "Uploading..." : "Upload"}
           </button>
           {value?.id ? (
             <button
@@ -223,7 +223,7 @@ export function LinkField({
       />
       <input
         className="w-full rounded border border-line px-2 py-1 text-[12px]"
-        placeholder="/join or https://…"
+        placeholder="/join or https://..."
         value={current.href}
         onChange={(event) => onChange({ ...current, href: event.target.value })}
       />

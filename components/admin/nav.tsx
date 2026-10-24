@@ -8,9 +8,11 @@ export type NavItem = { href: string; label: string; exact?: boolean };
 export function SidebarNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
   return (
-    <nav className="space-y-0.5">
+    <nav className="space-y-0.5" aria-label="Primary navigation">
       {items.map((item) => {
-        const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.href}
@@ -21,8 +23,8 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
                 : "text-white/60 hover:bg-white/5 hover:text-white"
             }`}
           >
-            {item.label}
-            {active ? <span className="h-1.5 w-1.5 rounded-full bg-gold-500" /> : null}
+            <span>{item.label}</span>
+            {active ? <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> : null}
           </Link>
         );
       })}
@@ -35,13 +37,17 @@ export function MobileNav({ items }: { items: NavItem[] }) {
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-1">
       {items.map((item) => {
-        const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.href}
             href={item.href}
             className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium ${
-              active ? "border-ink-900 bg-ink-900 text-white" : "border-line bg-white text-slate-600"
+              active
+                ? "border-slate-950 bg-slate-950 text-white"
+                : "border-slate-200 bg-white text-slate-600"
             }`}
           >
             {item.label}
@@ -59,7 +65,7 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
       onClick={() => {
         void navigator.clipboard.writeText(value);
       }}
-      className="rounded-md border border-line bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-paper"
+      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
     >
       {label}
     </button>

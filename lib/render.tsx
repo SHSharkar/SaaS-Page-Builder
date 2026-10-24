@@ -1,31 +1,12 @@
-import { Fragment, type CSSProperties } from "react";
+import { Fragment } from "react";
 import { BLOCKS } from "@/lib/registry";
 import {
-  FONT_STACKS,
-  RADIUS_TOKENS,
   type PageDocument,
   type PageSeo,
   type SiteTheme,
 } from "@/lib/documents";
 import type { ResolvedMedia } from "@/lib/media/refs";
-
-export function themeStyle(theme: SiteTheme): CSSProperties {
-  const radius = RADIUS_TOKENS[theme.radius] ?? RADIUS_TOKENS.soft;
-  return {
-    "--site-accent": theme.accent,
-    "--site-accent-contrast": theme.accentContrast,
-    "--site-bg": theme.background,
-    "--site-surface": theme.surface,
-    "--site-text": theme.text,
-    "--site-muted": theme.muted,
-    "--site-border": theme.border,
-    "--site-font-heading": FONT_STACKS[theme.headingFont] ?? FONT_STACKS["system-sans"],
-    "--site-font-body": FONT_STACKS[theme.bodyFont] ?? FONT_STACKS["system-sans"],
-    "--site-radius-sm": radius.sm,
-    "--site-radius-md": radius.md,
-    "--site-radius-lg": radius.lg,
-  } as CSSProperties;
-}
+import { cn, siteThemeClasses } from "@/lib/theme-classes";
 
 export function BlockRenderer({ document }: { document: PageDocument | null | undefined }) {
   if (!document?.content?.length) return null;
@@ -34,7 +15,11 @@ export function BlockRenderer({ document }: { document: PageDocument | null | un
       {document.content.map((node, index) => {
         const definition = BLOCKS[node.type];
         if (!definition) return null;
-        return <Fragment key={node.props?.id ?? `${node.type}-${index}`}>{definition.render(node.props as never)}</Fragment>;
+        return (
+          <Fragment key={node.props?.id ?? `${node.type}-${index}`}>
+            {definition.render(node.props as never)}
+          </Fragment>
+        );
       })}
     </>
   );
@@ -56,17 +41,11 @@ export function SiteFrame({
   const root = (document.root?.props ?? {}) as Record<string, unknown>;
   const width = String(root.contentWidth ?? "default");
   const background = String(root.background ?? "default");
-  const widthClass =
-    width === "narrow" ? "max-w-[820px]" : width === "wide" ? "max-w-[1400px]" : "max-w-[1160px]";
-  const backgroundStyle: CSSProperties =
-    background === "dark"
-      ? { background: "#05080f" }
-      : background === "surface"
-        ? { background: "var(--site-surface)" }
-        : {};
+  const widthPad =
+    width === "narrow" ? "px-6 sm:px-12 lg:px-20" : width === "wide" ? "px-3 sm:px-6" : "px-5";
 
   return (
-    <div className="site-scope flex min-h-screen flex-col" style={{ ...themeStyle(theme), ...backgroundStyle }}>
+    <div className={cn("flex min-h-screen flex-col", siteThemeClasses(theme, background))}>
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:text-black"
@@ -75,7 +54,7 @@ export function SiteFrame({
       </a>
       {root.hideHeader ? null : <BlockRenderer document={navigation} />}
       <main id="main" className="flex-1">
-        <div className={`mx-auto w-full ${widthClass} px-5`}>
+        <div className={cn("mx-auto w-full", widthPad)}>
           <BlockRenderer document={document} />
         </div>
       </main>
@@ -101,7 +80,7 @@ export function buildMetadata(input: PageMetadataInput) {
   const defaultsSeo = ((input.defaults?.root?.props as Record<string, unknown> | undefined)?.seo ??
     {}) as Partial<PageSeo>;
   const seo = { ...defaultsSeo, ...input.seo };
-  const title = seo.title?.trim() || `${input.title} · ${input.siteName}`;
+  const title = seo.title?.trim() || `${input.title} | ${input.siteName}`;
   const description = seo.description?.trim() || defaultsSeo.description?.trim() || input.theme.tagline;
   const ogTitle = seo.ogTitle?.trim() || title;
   const ogDescription = seo.ogDescription?.trim() || description;

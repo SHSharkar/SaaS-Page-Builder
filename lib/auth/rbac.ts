@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import "server-only";
+import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import {
   permissions,
@@ -7,207 +8,270 @@ import {
   sessions,
   staffInvites,
   users,
+  type Permission,
   type Role,
+  type Session,
 } from "@/lib/db/schema";
-import { PERMISSIONS, SYSTEM_ROLES, isKnownPermission, permissionsForRole } from "./permissions";
-import { staffManagerIds } from "./server";
-
-export type RoleWithCounts = Role & { memberCount: number; permissionCount: number };
+import { PERMISSIONS, PERMISSION_BY_KEY, PERMISSION_KEYS, SYSTEM_ROLES } from "./permissions";
+import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
+import { slugify } from "@/lib/documents";
+import { recordAudit } from "@/lib/audit";
 
 export async function syncRbacCatalog(): Promise<void> {
-  await ensureDb();
-
-  for (const [index, definition] of PERMISSIONS.entries()) {
-    const values = {
-      key: definition.key,
-      groupKey: definition.group,
-      label: definition.label,
-      description: definition.description,
-      dangerous: definition.dangerous ?? false,
-      sortOrder: index,
-    };
-    const [existing] = await db
-      .select({ id: permissions.id })
-      .from(permissions)
-      .where(eq(permissions.key, definition.key))
-      .limit(1);
-    if (existing) {
-      await db.update(permissions).set(values).where(eq(permissions.id, existing.id));
-    } else {
-      await db.insert(permissions).values(values);
-    }
+  for (const spec of PERMISSIONS) {
+    await db
+      .insert(permissions)
+      .values({
+        key: spec.key,
+        groupKey: spec.group,
+        label: spec.label,
+        description: spec.description,
+        dangerous: Boolean(spec.dangerous),
+      })
+      .onConflictDoUpdate({
+        target: permissions.key,
+        set: {
+          groupKey: spec.group,
+          label: spec.label,
+          description: spec.description,
+          dangerous: Boolean(spec.dangerous),
+        },
+      });
   }
 
-  const known = new Set(PERMISSIONS.map((permission) => permission.key));
-  const stored = await db.select({ id: permissions.id, key: permissions.key }).from(permissions);
-  for (const row of stored) {
-    if (!known.has(row.key)) await db.delete(permissions).where(eq(permissions.id, row.id));
-  }
-
-  const catalogue = await db.select().from(permissions);
-  const byKey = new Map(catalogue.map((permission) => [permission.key, permission]));
-
-  for (const definition of SYSTEM_ROLES) {
-    let [role] = await db.select().from(roles).where(eq(roles.key, definition.key)).limit(1);
-    if (!role) {
-      [role] = await db
+  for (const seed of SYSTEM_ROLES) {
+    const existing = await db.select().from(roles).where(eq(roles.key, seed.key)).limit(1);
+    let roleRow: Role;
+    const isNew = existing.length === 0;
+    if (isNew) {
+      const [inserted] = await db
         .insert(roles)
         .values({
-          key: definition.key,
-          name: definition.name,
-          description: definition.description,
-          rank: definition.rank,
+          key: seed.key,
+          name: seed.name,
+          description: seed.description,
+          rank: seed.rank,
           isSystem: true,
-          permissionsSeeded: false,
         })
         .returning();
-    } else if (!role.isSystem || role.name !== definition.name || role.rank !== definition.rank) {
-      [role] = await db
+      roleRow = inserted;
+    } else {
+      roleRow = existing[0];
+      await db
         .update(roles)
-        .set({ name: definition.name, description: definition.description, rank: definition.rank, isSystem: true })
-        .where(eq(roles.id, role.id))
-        .returning();
+        .set({ rank: seed.rank, isSystem: true })
+        .where(eq(roles.id, roleRow.id));
     }
 
-    if (role.permissionsSeeded && definition.key !== "admin") continue;
-
-    const wanted = permissionsForRole(definition);
-    const current = await db
-      .select({ permissionId: rolePermissions.permissionId })
-      .from(rolePermissions)
-      .where(eq(rolePermissions.roleId, role.id));
-    const currentIds = new Set(current.map((row) => row.permissionId));
-    const wantedIds = new Set(wanted.map((key) => byKey.get(key)?.id).filter(Boolean) as string[]);
-
-    for (const permissionId of wantedIds) {
-      if (!currentIds.has(permissionId)) {
-        await db.insert(rolePermissions).values({ roleId: role.id, permissionId });
-      }
-    }
-    for (const permissionId of currentIds) {
-      if (!wantedIds.has(permissionId)) {
+    const keys = seed.permissions === "*" ? PERMISSION_KEYS : seed.permissions;
+    if (isNew || seed.permissions === "*") {
+      if (keys.length) {
         await db
-          .delete(rolePermissions)
-          .where(and(eq(rolePermissions.roleId, role.id), eq(rolePermissions.permissionId, permissionId)));
+          .insert(rolePermissions)
+          .values(keys.map((permissionKey) => ({ roleId: roleRow.id, permissionKey })))
+          .onConflictDoNothing();
       }
-    }
-
-    if (!role.permissionsSeeded) {
-      await db.update(roles).set({ permissionsSeeded: true }).where(eq(roles.id, role.id));
     }
   }
-
-  await refreshStaffManagers();
 }
 
-export async function refreshStaffManagers(): Promise<void> {
+export async function listRoles(): Promise<
+  (Role & {
+    memberCount: number;
+    permissionCount: number;
+    permissionKeys: string[];
+    pendingInviteCount: number;
+  })[]
+> {
   await ensureDb();
-  const rows = await db
-    .selectDistinct({ userId: users.id })
-    .from(users)
-    .innerJoin(roles, eq(roles.key, users.role))
-    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
-    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
-    .where(and(eq(users.banned, false), inArray(permissions.key, ["staff.manage", "role.manage"])));
-  staffManagerIds.length = 0;
-  staffManagerIds.push(...rows.map((row) => row.userId));
-}
-
-export async function listRoles(): Promise<RoleWithCounts[]> {
-  await ensureDb();
-  const rows = await db.select().from(roles).orderBy(sql`${roles.rank} desc`, asc(roles.name));
-  const memberCounts = await db.select({ role: users.role, total: count() }).from(users).groupBy(users.role);
-  const permissionCounts = await db
-    .select({ roleId: rolePermissions.roleId, total: count() })
-    .from(rolePermissions)
-    .groupBy(rolePermissions.roleId);
-  const members = new Map(memberCounts.map((row) => [row.role, Number(row.total)]));
-  const grants = new Map(permissionCounts.map((row) => [row.roleId, Number(row.total)]));
-  return rows.map((role) => ({
-    ...role,
-    memberCount: members.get(role.key) ?? 0,
-    permissionCount: grants.get(role.id) ?? 0,
-  }));
+  const [allRoles, memberRows, grantRows, inviteRows] = await Promise.all([
+    db.select().from(roles).orderBy(desc(roles.rank), asc(roles.name)),
+    db
+      .select({ roleKey: users.role, count: sql<number>`count(*)::int` })
+      .from(users)
+      .groupBy(users.role),
+    db.select().from(rolePermissions),
+    db
+      .select({ roleId: staffInvites.roleId, count: sql<number>`count(*)::int` })
+      .from(staffInvites)
+      .where(eq(staffInvites.status, "pending"))
+      .groupBy(staffInvites.roleId),
+  ]);
+  const members = new Map(memberRows.map((row) => [row.roleKey, row.count]));
+  const invites = new Map(inviteRows.map((row) => [row.roleId, row.count]));
+  const grants = new Map<string, string[]>();
+  for (const g of grantRows) {
+    const arr = grants.get(g.roleId) ?? [];
+    arr.push(g.permissionKey);
+    grants.set(g.roleId, arr);
+  }
+  return allRoles.map((role) => {
+    const keys = grants.get(role.id) ?? [];
+    return {
+      ...role,
+      memberCount: members.get(role.key) ?? 0,
+      permissionCount: keys.length,
+      permissionKeys: keys,
+      pendingInviteCount: invites.get(role.id) ?? 0,
+    };
+  });
 }
 
 export async function getRole(roleId: string): Promise<Role | null> {
   await ensureDb();
-  const [role] = await db.select().from(roles).where(eq(roles.id, roleId)).limit(1);
-  return role ?? null;
+  const [row] = await db.select().from(roles).where(eq(roles.id, roleId)).limit(1);
+  return row ?? null;
 }
 
 export async function getRoleByKey(key: string): Promise<Role | null> {
   await ensureDb();
-  const [role] = await db.select().from(roles).where(eq(roles.key, key)).limit(1);
-  return role ?? null;
+  const [row] = await db.select().from(roles).where(eq(roles.key, key)).limit(1);
+  return row ?? null;
 }
 
 export async function rolePermissionKeys(roleId: string): Promise<string[]> {
   await ensureDb();
   const rows = await db
-    .select({ key: permissions.key })
+    .select({ key: rolePermissions.permissionKey })
     .from(rolePermissions)
-    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
     .where(eq(rolePermissions.roleId, roleId));
-  return rows.map((row) => row.key).sort();
+  return rows.map((row) => row.key);
 }
 
-export async function permissionMatrix() {
+export async function rolesForUser(userId: string): Promise<Role[]> {
   await ensureDb();
-  return db.select().from(permissions).orderBy(asc(permissions.sortOrder));
+  const rows = await db
+    .select({ role: roles })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(eq(users.id, userId))
+    .limit(1);
+  return rows.map((row) => row.role);
 }
 
-export function slugifyRoleKey(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
+export async function permissionKeysForUser(userId: string): Promise<string[]> {
+  await ensureDb();
+  const rows = await db
+    .selectDistinct({ key: rolePermissions.permissionKey })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+    .where(eq(users.id, userId));
+  return rows.map((row) => row.key);
+}
+
+export async function countActiveStaffAtRank(minRank: number, excludingUserId?: string): Promise<number> {
+  await ensureDb();
+  const conditions = [eq(users.banned, false), gte(roles.rank, minRank)];
+  if (excludingUserId) conditions.push(ne(users.id, excludingUserId));
+  const [row] = await db
+    .select({ count: sql<number>`count(distinct ${users.id})::int` })
+    .from(users)
+    .innerJoin(roles, eq(roles.key, users.role))
+    .where(and(...conditions));
+  return row?.count ?? 0;
+}
+
+function validatePermissionKeys(keys: string[]): string[] {
+  const unique = [...new Set(keys)];
+  for (const key of unique) {
+    if (!PERMISSION_BY_KEY.has(key)) {
+      throw new ValidationError(`Unknown permission "${key}".`);
+    }
+  }
+  return unique;
 }
 
 export async function createRole(input: {
-  key?: string;
   name: string;
   description?: string;
   rank?: number;
-  permissionKeys?: string[];
+  permissionKeys: string[];
   actorId: string | null;
 }): Promise<Role> {
   await ensureDb();
   const name = input.name.trim();
-  if (!name) throw new Error("Give the role a name.");
-  const key = slugifyRoleKey(input.key || name);
-  if (!key) throw new Error("The role name needs at least one letter or number.");
-  if (SYSTEM_ROLES.some((role) => role.key === key)) throw new Error(`"${key}" is a system role key. Pick another.`);
-  const [existing] = await db.select({ id: roles.id }).from(roles).where(eq(roles.key, key)).limit(1);
-  if (existing) throw new Error("A role with that key already exists.");
+  if (name.length < 2 || name.length > 60) {
+    throw new ValidationError("Role names must be between 2 and 60 characters.");
+  }
+  const key = slugify(name).replace(/\//g, "-");
+  if (!key || key.length < 2 || !/^[a-z0-9][a-z0-9_-]*$/.test(key)) {
+    throw new ValidationError("Choose a role name with letters or numbers.");
+  }
+  const rank = Math.max(0, Math.min(99, Math.round(input.rank ?? 25)));
+  const keys = validatePermissionKeys(input.permissionKeys);
 
-  const [role] = await db
-    .insert(roles)
-    .values({ key, name, description: input.description?.trim() ?? "", rank: input.rank ?? 0, isSystem: false })
-    .returning();
-  if (input.permissionKeys?.length) await setRolePermissions(role.id, input.permissionKeys, input.actorId);
-  return role;
+  const clash = await getRoleByKey(key);
+  if (clash) throw new ConflictError(`A role with the key "${key}" already exists.`);
+
+  const created = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(roles)
+      .values({
+        key,
+        name,
+        description: (input.description ?? "").trim().slice(0, 240),
+        rank,
+        isSystem: false,
+      })
+      .returning();
+    if (keys.length) {
+      await tx
+        .insert(rolePermissions)
+        .values(keys.map((permissionKey) => ({ roleId: row.id, permissionKey })));
+    }
+    return row;
+  });
+
+  await recordAudit({
+    actorId: input.actorId,
+    action: "role_created",
+    targetType: "role",
+    targetId: created.id,
+    summary: `Created role "${created.name}" (${keys.length} permissions)`,
+    metadata: { key: created.key, rank, permissions: keys },
+  });
+  return created;
 }
 
 export async function updateRole(
   roleId: string,
-  input: { name?: string; description?: string; rank?: number },
+  patch: { name?: string; description?: string; rank?: number },
+  actorId: string | null = null,
 ): Promise<Role> {
   await ensureDb();
   const role = await getRole(roleId);
-  if (!role) throw new Error("Role not found.");
+  if (!role) throw new NotFoundError("Role not found.");
+
+  const nextName = patch.name !== undefined ? patch.name.trim() : role.name;
+  if (nextName.length < 2 || nextName.length > 60) {
+    throw new ValidationError("Role names must be between 2 and 60 characters.");
+  }
+  const nextRank =
+    role.isSystem || patch.rank === undefined
+      ? role.rank
+      : Math.max(0, Math.min(99, Math.round(patch.rank)));
+
   const [updated] = await db
     .update(roles)
     .set({
-      name: input.name?.trim() || role.name,
-      description: input.description !== undefined ? input.description.trim() : role.description,
-      rank: input.rank ?? role.rank,
+      name: nextName,
+      description:
+        patch.description !== undefined ? patch.description.trim().slice(0, 240) : role.description,
+      rank: nextRank,
       updatedAt: new Date(),
     })
     .where(eq(roles.id, roleId))
     .returning();
+
+  await recordAudit({
+    actorId,
+    action: "role_updated",
+    targetType: "role",
+    targetId: roleId,
+    summary: `Updated role "${updated.name}"`,
+    metadata: { name: updated.name, rank: updated.rank },
+  });
   return updated;
 }
 
@@ -215,139 +279,117 @@ export async function setRolePermissions(
   roleId: string,
   permissionKeys: string[],
   actorId: string | null,
-): Promise<string[]> {
+): Promise<{ added: string[]; removed: string[] }> {
   await ensureDb();
   const role = await getRole(roleId);
-  if (!role) throw new Error("Role not found.");
-  const unique = [...new Set(permissionKeys)].filter((key) => {
-    if (!isKnownPermission(key)) throw new Error(`Unknown permission "${key}".`);
-    return true;
+  if (!role) throw new NotFoundError("Role not found.");
+  if (role.key === "admin") {
+    throw new ValidationError(
+      "The Administrator role always holds every permission so the platform cannot lock itself out.",
+    );
+  }
+  const desired = validatePermissionKeys(permissionKeys);
+  const current = new Set(await rolePermissionKeys(roleId));
+  const next = new Set(desired);
+  const added = desired.filter((key) => !current.has(key));
+  const removed = [...current].filter((key) => !next.has(key));
+
+  await db.transaction(async (tx) => {
+    if (removed.length) {
+      await tx
+        .delete(rolePermissions)
+        .where(
+          and(eq(rolePermissions.roleId, roleId), inArray(rolePermissions.permissionKey, removed)),
+        );
+    }
+    if (added.length) {
+      await tx
+        .insert(rolePermissions)
+        .values(added.map((permissionKey) => ({ roleId, permissionKey })))
+        .onConflictDoNothing();
+    }
+    await tx.update(roles).set({ updatedAt: new Date() }).where(eq(roles.id, roleId));
   });
 
-  const catalogue = await db.select().from(permissions);
-  const wanted = catalogue.filter((permission) => unique.includes(permission.key));
-  const current = await db
-    .select({ permissionId: rolePermissions.permissionId })
-    .from(rolePermissions)
-    .where(eq(rolePermissions.roleId, roleId));
-  const currentIds = new Set(current.map((row) => row.permissionId));
-
-  for (const permission of wanted) {
-    if (!currentIds.has(permission.id)) {
-      await db.insert(rolePermissions).values({ roleId, permissionId: permission.id, grantedBy: actorId });
-    }
-  }
-  const wantedIds = new Set(wanted.map((permission) => permission.id));
-  for (const permissionId of currentIds) {
-    if (!wantedIds.has(permissionId)) {
-      await db
-        .delete(rolePermissions)
-        .where(and(eq(rolePermissions.roleId, roleId), eq(rolePermissions.permissionId, permissionId)));
-    }
-  }
-  await refreshStaffManagers();
-  return wanted.map((permission) => permission.key).sort();
+  await recordAudit({
+    actorId,
+    action: "role_permissions_changed",
+    targetType: "role",
+    targetId: roleId,
+    summary: `Adjusted permissions on "${role.name}" (+${added.length} / -${removed.length})`,
+    metadata: { roleKey: role.key, added, removed, total: desired.length },
+  });
+  return { added, removed };
 }
 
 export async function deleteRole(roleId: string, actorId: string | null): Promise<void> {
   await ensureDb();
   const role = await getRole(roleId);
-  if (!role) throw new Error("Role not found.");
-  if (role.isSystem) throw new Error("System roles cannot be deleted. Edit their permissions instead.");
-  const members = await db.select({ id: users.id }).from(users).where(eq(users.role, role.key));
-  if (members.length) throw new Error("Move the people on this role to another role first.");
-  const invites = await db
-    .select({ id: staffInvites.id })
-    .from(staffInvites)
-    .where(and(eq(staffInvites.roleId, roleId), eq(staffInvites.status, "pending")));
-  if (invites.length) throw new Error("Revoke the pending invitations that use this role first.");
+  if (!role) throw new NotFoundError("Role not found.");
+  if (role.isSystem) throw new ValidationError("System roles cannot be deleted.");
+  const [holders] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users)
+    .where(eq(users.role, role.key));
+  if ((holders?.count ?? 0) > 0) {
+    throw new ConflictError(
+      `${holders.count} account(s) still hold "${role.name}". Move them to another role first.`,
+    );
+  }
   await db.delete(roles).where(eq(roles.id, roleId));
-  void actorId;
-  await refreshStaffManagers();
+  await recordAudit({
+    actorId,
+    action: "role_deleted",
+    targetType: "role",
+    targetId: roleId,
+    summary: `Deleted custom role "${role.name}"`,
+    metadata: { key: role.key },
+  });
 }
 
-export async function rolesForUser(userId: string): Promise<Role[]> {
+export async function listSessions(filter?: { userId?: string }): Promise<
+  (Session & { userEmail: string; userName: string; user: typeof users.$inferSelect })[]
+> {
   await ensureDb();
-  const [user] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) return [];
-  const role = await getRoleByKey(user.role);
-  return role ? [role] : [];
-}
-
-export async function permissionKeysForUser(userId: string): Promise<string[]> {
-  await ensureDb();
-  return db
-    .select({ key: permissions.key })
-    .from(users)
-    .innerJoin(roles, eq(roles.key, users.role))
-    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
-    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
-    .where(eq(users.id, userId))
-    .then((rows) => rows.map((row) => row.key));
-}
-
-export async function countActiveStaffAtRank(rank: number, excludeUserId?: string): Promise<number> {
-  await ensureDb();
+  const now = new Date();
+  const conditions = [gte(sessions.expiresAt, now)];
+  if (filter?.userId) conditions.push(eq(sessions.userId, filter.userId));
   const rows = await db
-    .select({ id: users.id })
-    .from(users)
-    .innerJoin(roles, eq(roles.key, users.role))
-    .where(and(eq(users.banned, false), sql`${roles.rank} >= ${rank}`));
-  return rows.filter((row) => row.id !== excludeUserId).length;
-}
-
-export function permissionDefinition(key: string) {
-  return PERMISSIONS.find((permission) => permission.key === key);
-}
-
-export type SessionRow = {
-  id: string;
-  token: string;
-  ipAddress: string | null;
-  userAgent: string | null;
-  createdAt: Date;
-  expiresAt: Date;
-  impersonatedBy: string | null;
-  user: { id: string; name: string; email: string; role: string };
-};
-
-export async function listSessions(options: { userId?: string; exclude?: string } = {}): Promise<SessionRow[]> {
-  await ensureDb();
-  const filters = [sql`${sessions.expiresAt} > now()`];
-  if (options.userId) filters.push(eq(sessions.userId, options.userId));
-  if (options.exclude) filters.push(ne(sessions.id, options.exclude));
-  const rows = await db
-    .select({
-      id: sessions.id,
-      token: sessions.token,
-      ipAddress: sessions.ipAddress,
-      userAgent: sessions.userAgent,
-      createdAt: sessions.createdAt,
-      expiresAt: sessions.expiresAt,
-      impersonatedBy: sessions.impersonatedBy,
-      userId: users.id,
-      name: users.name,
-      email: users.email,
-      role: users.role,
-    })
+    .select({ session: sessions, user: users })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(...filters))
+    .where(and(...conditions))
     .orderBy(desc(sessions.createdAt));
   return rows.map((row) => ({
-    id: row.id,
-    token: row.token,
-    ipAddress: row.ipAddress,
-    userAgent: row.userAgent,
-    createdAt: row.createdAt,
-    expiresAt: row.expiresAt,
-    impersonatedBy: row.impersonatedBy,
-    user: { id: row.userId, name: row.name, email: row.email, role: row.role },
+    ...row.session,
+    userEmail: row.user.email,
+    userName: row.user.name,
+    user: row.user,
   }));
 }
 
 export async function revokeSessionById(sessionId: string): Promise<boolean> {
   await ensureDb();
-  const result = await db.delete(sessions).where(eq(sessions.id, sessionId));
-  return (result.rowCount ?? 0) > 0;
+  const removed = await db
+    .delete(sessions)
+    .where(eq(sessions.id, sessionId))
+    .returning({ id: sessions.id });
+  return removed.length > 0;
+}
+
+export async function revokeAllUserSessions(
+  userId: string,
+  exceptSessionId?: string,
+): Promise<number> {
+  await ensureDb();
+  const condition = exceptSessionId
+    ? and(eq(sessions.userId, userId), ne(sessions.id, exceptSessionId))
+    : eq(sessions.userId, userId);
+  const removed = await db.delete(sessions).where(condition).returning({ id: sessions.id });
+  return removed.length;
+}
+
+export async function permissionMatrix(): Promise<Permission[]> {
+  await ensureDb();
+  return db.select().from(permissions).orderBy(asc(permissions.groupKey), asc(permissions.key));
 }

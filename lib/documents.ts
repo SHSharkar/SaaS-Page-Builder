@@ -1,92 +1,102 @@
+import { z } from "zod";
+import { ValidationError } from "./errors";
 
 export const DOCUMENT_SCHEMA_VERSION = 1;
+export const MAX_DOCUMENT_CHARS = 200_000;
 
-export type BlockNode = {
+export interface MediaRef {
+  id: string;
+  url?: string;
+  alt?: string;
+  focalPoint?: { x: number; y: number };
+}
+
+export interface LinkTarget {
+  label: string;
+  href: string;
+  placement?: string;
+  newTab?: boolean;
+  style?: "solid" | "outline" | "ghost" | "light";
+}
+
+export interface BlockAppearance {
+  background?: "inherit" | "default" | "surface" | "elevated" | "accent" | "muted" | "dark" | "light" | "transparent";
+  foreground?: "default" | "muted" | "contrast";
+  spacing?: "none" | "sm" | "md" | "lg" | "xl";
+  width?: "narrow" | "default" | "wide" | "full";
+  align?: "left" | "center" | "right";
+  corners?: "none" | "sm" | "md" | "lg";
+  visibility?: "all" | "desktop" | "mobile";
+  anchor?: string;
+}
+
+export interface BlockNode {
   type: string;
-  props: Record<string, unknown> & { id?: string };
-};
+  props: Record<string, unknown> & {
+    id?: string;
+    appearance?: BlockAppearance;
+  };
+}
 
-export type PageRootProps = {
-  contentWidth: "narrow" | "default" | "wide";
-  background: "default" | "surface" | "dark";
-  hideHeader?: boolean;
-  hideFooter?: boolean;
-  hideDock?: boolean;
-};
-
-export type PageDocument = {
-  schemaVersion: number;
-  root: { props: PageRootProps };
-  content: BlockNode[];
-  zones?: Record<string, BlockNode[]>;
-};
+export const pageSeoSchema = z.object({
+  title: z.string().max(120).optional(),
+  metaTitle: z.string().max(120).optional(),
+  description: z.string().max(320).optional(),
+  metaDescription: z.string().max(320).optional(),
+  ogTitle: z.string().max(120).optional(),
+  ogDescription: z.string().max(320).optional(),
+  shareImageId: z.string().uuid().nullable().optional(),
+  canonicalMode: z.enum(["self", "none", "custom"]).default("self"),
+  canonicalUrl: z.string().max(500).optional(),
+  noindex: z.boolean().default(false),
+  keywords: z.string().max(300).optional(),
+});
 
 export type PageSeo = {
   title?: string;
+  metaTitle?: string;
   description?: string;
-  shareImageId?: string | null;
+  metaDescription?: string;
   ogTitle?: string;
   ogDescription?: string;
-  keywords?: string;
-  canonicalMode: "self" | "none" | "custom";
+  shareImageId?: string | null;
+  canonicalMode?: "self" | "none" | "custom";
   canonicalUrl?: string;
-  noindex: boolean;
+  noindex?: boolean;
+  keywords?: string;
 };
 
-export type SiteTheme = {
-  accent: string;
-  accentContrast: string;
-  background: string;
-  surface: string;
-  text: string;
-  muted: string;
-  border: string;
-  headingFont: string;
-  bodyFont: string;
-  radius: "sharp" | "soft" | "round";
-  logoText: string;
-  logoMediaId?: string | null;
-  tagline?: string;
-};
-
-export const FONT_STACKS: Record<string, string> = {
-  "system-sans": 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  "system-serif": 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
-  "geometric": '"Avenir Next", "Futura", "Century Gothic", ui-sans-serif, system-ui, sans-serif',
-  "grotesk": '"Helvetica Neue", "Inter", "Segoe UI", Roboto, Arial, sans-serif',
-  "mono": 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-};
-
-export const RADIUS_TOKENS: Record<SiteTheme["radius"], { sm: string; md: string; lg: string }> = {
-  sharp: { sm: "2px", md: "4px", lg: "6px" },
-  soft: { sm: "6px", md: "10px", lg: "16px" },
-  round: { sm: "10px", md: "16px", lg: "24px" },
-};
-
-export const DEFAULT_THEME: SiteTheme = {
-  accent: "#c8a24a",
-  accentContrast: "#111827",
-  background: "#0b1120",
-  surface: "#121a2b",
-  text: "#f4f6fb",
-  muted: "#9aa4bb",
-  border: "#243049",
-  headingFont: "system-sans",
-  bodyFont: "system-sans",
-  radius: "soft",
-  logoText: "Trofeo",
-  logoMediaId: null,
-  tagline: "Rewards that keep players playing",
-};
+export type DocumentMeta = Partial<PageSeo>;
 
 export const DEFAULT_SEO: PageSeo = {
   canonicalMode: "self",
   noindex: false,
 };
 
-export const DEFAULT_ROOT_PROPS: PageRootProps = {
-  contentWidth: "default",
+export interface PageDocument {
+  schemaVersion: number;
+  root: {
+    props: {
+      id?: string;
+      title?: string;
+      background?: "default" | "surface" | "dark";
+      contentWidth?: "narrow" | "default" | "wide";
+      hideHeader?: boolean;
+      hideFooter?: boolean;
+      hideDock?: boolean;
+      seo?: Partial<PageSeo>;
+    };
+  };
+  content: BlockNode[];
+  zones?: Record<string, BlockNode[]>;
+}
+
+export const DEFAULT_ROOT_PROPS: PageDocument["root"]["props"] = {
   background: "default",
+  contentWidth: "default",
+  hideHeader: false,
+  hideFooter: false,
+  hideDock: false,
 };
 
 export function emptyDocument(): PageDocument {
@@ -97,182 +107,225 @@ export function emptyDocument(): PageDocument {
   };
 }
 
-export type MediaRef = {
-  id: string;
-  url?: string;
-  alt?: string;
-  width?: number;
-  height?: number;
+export function newBlockId(prefix = "blk"): string {
+  const safe = prefix.replace(/[^a-z0-9-]/gi, "").slice(0, 20) || "blk";
+  return `${safe}-${globalThis.crypto.randomUUID().slice(0, 8)}`;
+}
+
+export function migrateDocument(input: unknown): PageDocument {
+  if (!input || typeof input !== "object") {
+    return emptyDocument();
+  }
+  const raw = input as Partial<PageDocument> & {
+    blocks?: { id?: string; type: string; props?: Record<string, unknown> }[];
+    meta?: Partial<PageSeo>;
+  };
+  const contentSource = Array.isArray(raw.content)
+    ? raw.content
+    : Array.isArray(raw.blocks)
+      ? raw.blocks.map((b) => ({
+          type: b.type,
+          props: { ...(b.props ?? {}), id: b.id ?? b.props?.id ?? newBlockId(b.type) },
+        }))
+      : [];
+
+  const rootProps: PageDocument["root"]["props"] = {
+    ...DEFAULT_ROOT_PROPS,
+    ...(raw.root?.props ?? {}),
+    ...(raw.meta ? { seo: { ...(raw.root?.props?.seo ?? {}), ...raw.meta } } : {}),
+  };
+
+  return {
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
+    root: { props: rootProps },
+    content: contentSource.map((node) => ({
+      type: String(node.type ?? ""),
+      props: {
+        ...(node.props ?? {}),
+        id:
+          typeof node.props?.id === "string" && node.props.id.trim()
+            ? node.props.id
+            : newBlockId(String(node.type ?? "blk")),
+      },
+    })),
+    ...(raw.zones && typeof raw.zones === "object" ? { zones: raw.zones } : {}),
+  };
+}
+
+export const parseDocument = migrateDocument;
+
+export function cloneDocumentWithNewIds(doc: PageDocument): PageDocument {
+  const cloned = JSON.parse(JSON.stringify(migrateDocument(doc))) as PageDocument;
+  cloned.content = cloned.content.map((node) => ({
+    type: node.type,
+    props: {
+      ...node.props,
+      id: newBlockId(node.type),
+    },
+  }));
+  return cloned;
+}
+
+export function assertDocumentSize(doc: PageDocument): void {
+  const ordered: PageDocument = {
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
+    root: doc.root,
+    content: doc.content,
+    ...(doc.zones ? { zones: doc.zones } : {}),
+  };
+  const serialized = JSON.stringify(ordered);
+  if (serialized.length > MAX_DOCUMENT_CHARS) {
+    throw new ValidationError(
+      `Page document exceeds the ${MAX_DOCUMENT_CHARS.toLocaleString("en-US")} character limit.`,
+    );
+  }
+}
+
+export function sanitizeRichHtml(raw: string): string {
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<(object|embed|form|input|button)[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(object|embed|form|input|button)[^>]*\/?>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src|xlink:href)\s*=\s*["']\s*(javascript:|vbscript:|data:text\/html)[^"']*["']/gi, "");
+}
+
+export const siteThemeSchema = z.object({
+  palette: z
+    .enum(["obsidian-gold", "emerald-casino", "midnight-neon", "ivory-editorial"])
+    .optional(),
+  fontPair: z.enum(["editorial", "geometric", "classic", "modern"]).optional(),
+  accent: z.string().default("#c8a24a"),
+  accentContrast: z.string().default("#0b1120"),
+  background: z.string().default("#0b1120"),
+  surface: z.string().default("#131b2e"),
+  text: z.string().default("#f4f6fb"),
+  ink: z.string().optional(),
+  muted: z.string().default("#9aa4bb"),
+  border: z.string().default("#202b44"),
+  headingFont: z.enum(["editorial", "modern", "geometric", "mono"]).default("editorial"),
+  bodyFont: z.enum(["modern", "editorial", "geometric", "mono"]).default("modern"),
+  radius: z.enum(["sharp", "soft", "round", "rounded", "pill"]).default("soft"),
+  logoMediaId: z.string().nullable().default(null),
+  logoText: z.string().default("Trofeo"),
+  tagline: z.string().default(""),
+});
+
+export type SiteTheme = z.infer<typeof siteThemeSchema>;
+
+export const DEFAULT_THEME: SiteTheme = siteThemeSchema.parse({});
+
+export const FONT_STACKS: Record<string, string> = {
+  editorial: "'Fraunces', 'Iowan Old Style', Georgia, serif",
+  modern: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  geometric: "'Space Grotesk', 'Inter', -apple-system, sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
 };
 
-export type PlaceholderSpec = {
+export interface TemplatePlaceholder {
   key: string;
   label: string;
-  kind: "text" | "number" | "color" | "link" | "media";
   defaultValue: string;
-};
+  hint?: string;
+  kind: "text" | "url" | "color" | "number";
+}
 
-export type ImportSegment = {
+export interface ImportSegment {
   id: string;
   index: number;
   label: string;
+  sourceTag: string;
   excerpt: string;
-  shape: {
-    tag: string;
-    headings: string[];
-    paragraphs: number;
-    buttons: number;
-    images: number;
-    repeatedChildren: number;
-  };
-  proposedAlias: string;
+  rawHtml: string;
+  suggestedType: string | null;
   confidence: number;
   props: Record<string, unknown>;
-  assetUrls: string[];
-  reason: string;
-};
+  decision: "accept" | "remap" | "skip" | "raw_html";
+}
 
-export type ImportUnmapped = {
-  index: number;
-  label: string;
-  excerpt: string;
-  reason: string;
-};
-
-export type ImportMapping = {
-  schemaVersion: number;
-  generatedAt: string;
-  method: "deterministic" | "deterministic+llm";
+export interface ImportReport {
+  title: string;
+  mappedCount: number;
+  unmappedCount: number;
+  strippedCount: number;
+  imagesImported: number;
+  imagesSkipped: number;
+  warnings: string[];
   segments: ImportSegment[];
-  unmapped: ImportUnmapped[];
-  palette: string[];
-  pageTitle: string;
-  counts: { sections: number; mapped: number; unmapped: number };
-};
+}
 
-export type ImportReviewDecision = {
+export interface ImportReviewDecision {
   segmentId: string;
-  decision: "accepted" | "remapped" | "removed";
+  decision: "accepted" | "remapped" | "removed" | "raw_html";
   alias?: string;
   props?: Record<string, unknown>;
   decidedBy: string;
   decidedAt: string;
-};
+}
 
-export type ImportReview = {
-  decisions: ImportReviewDecision[];
-  reviewerId: string;
-  reviewerName: string;
-  reviewedAt: string;
-};
-
-export function normalizeHostname(raw: string): string {
-  return raw
-    .trim()
+export function slugify(input: string): string {
+  return input
     .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/:\d+$/, "");
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9/]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/(^[-/]+|[-/]+$)/g, "")
+    .replace(/-\//g, "/")
+    .replace(/\/-/g, "/");
+}
+
+export function normalizePageSlug(raw: string): string {
+  const cleaned = slugify(raw);
+  return cleaned || "home";
+}
+
+export function normalizePath(raw: string | null | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed || trimmed === "/") return "/";
+  const cleaned = slugify(trimmed);
+  return cleaned ? `/${cleaned}` : "/";
+}
+
+export function normalizeHostname(raw: string | null | undefined): string {
+  if (!raw) return "";
+  let host = raw.trim().toLowerCase();
+  host = host.replace(/^https?:\/\//, "");
+  host = host.split("/")[0] ?? "";
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end >= 0 ? host.slice(0, end + 1) : host;
+  }
+  host = host.replace(/:\d+$/, "").replace(/\.+$/, "");
+  return host;
 }
 
 export function assertHostname(raw: string): string {
   const host = normalizeHostname(raw);
-  if (!/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)) {
-    throw new Error("Enter a hostname without a scheme, for example offers.example.com");
+  if (!host || host.length > 253) {
+    throw new ValidationError("Enter a valid domain name such as www.brand.example.");
   }
-  if (host.startsWith("www.")) {
-    throw new Error("Add the apex hostname (example.com); www is served automatically.");
+  if (
+    host === "localhost" ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+    host.includes(":")
+  ) {
+    throw new ValidationError("Custom domains must be public DNS hostnames, not IP addresses or localhost.");
+  }
+  const labels = host.split(".");
+  if (labels.length < 2) {
+    throw new ValidationError("Enter a fully qualified domain name with at least one dot.");
+  }
+  for (const label of labels) {
+    if (
+      !label ||
+      label.length > 63 ||
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+    ) {
+      throw new ValidationError(`"${raw}" is not a valid DNS hostname.`);
+    }
   }
   return host;
-}
-
-export function slugify(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-}
-
-export function normalizePath(raw: string): string {
-  return raw.replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
-}
-
-export function normalizeSlugPath(raw: string): string {
-  return normalizePath(
-    raw
-      .split("/")
-      .map((segment) => slugify(segment))
-      .filter(Boolean)
-      .join("/"),
-  );
-}
-
-export function extractMediaIds(value: unknown, acc = new Set<string>()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const item of value) extractMediaIds(item, acc);
-    return acc;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-
-    if (typeof record.id === "string" && !("type" in record)) acc.add(record.id);
-    for (const item of Object.values(record)) extractMediaIds(item, acc);
-  }
-  return acc;
-}
-
-export function replaceTokens(value: unknown, tokens: Record<string, string>): unknown {
-  if (typeof value === "string") {
-    return value.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key: string) =>
-      key in tokens ? tokens[key] : match,
-    );
-  }
-  if (Array.isArray(value)) return value.map((item) => replaceTokens(item, tokens));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        replaceTokens(item, tokens),
-      ]),
-    );
-  }
-  return value;
-}
-
-export function collectTokens(value: unknown, acc = new Set<string>()): Set<string> {
-  if (typeof value === "string") {
-    for (const match of value.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g)) acc.add(match[1]);
-    return acc;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectTokens(item, acc);
-    return acc;
-  }
-  if (value && typeof value === "object") {
-    for (const item of Object.values(value as Record<string, unknown>)) collectTokens(item, acc);
-  }
-  return acc;
-}
-
-export type ThemeCss = Record<string, string>;
-
-export function themeCssVars(theme: SiteTheme): ThemeCss {
-  const radius = RADIUS_TOKENS[theme.radius] ?? RADIUS_TOKENS.soft;
-  return {
-    "--site-accent": theme.accent,
-    "--site-accent-contrast": theme.accentContrast,
-    "--site-bg": theme.background,
-    "--site-surface": theme.surface,
-    "--site-text": theme.text,
-    "--site-muted": theme.muted,
-    "--site-border": theme.border,
-    "--site-font-heading": FONT_STACKS[theme.headingFont] ?? FONT_STACKS["system-sans"],
-    "--site-font-body": FONT_STACKS[theme.bodyFont] ?? FONT_STACKS["system-sans"],
-    "--site-radius-sm": radius.sm,
-    "--site-radius-md": radius.md,
-    "--site-radius-lg": radius.lg,
-  };
 }

@@ -1,77 +1,77 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { can, requireView } from "@/lib/auth/session";
 import { getSite } from "@/lib/sites";
-import { listSiteContents, GLOBAL_LABELS, type GlobalKind } from "@/lib/globals";
-import { requireView } from "@/lib/auth/session";
-import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
+import { GLOBAL_INFO, ensureDefaultGlobals, listSiteContents } from "@/lib/globals";
+import { Panel, relativeTime } from "@/components/admin/ui";
+import { adminButtonVariants } from "@/lib/theme-classes";
 
-export const dynamic = "force-dynamic";
-
-const DESCRIPTIONS: Record<GlobalKind, string> = {
-  navigation: "The header that appears at the top of every page: logo, links and the primary call to action.",
-  footer: "The footer shared by every page: legal links, licence line, social links and contact details.",
-  defaults: "Site-wide default SEO tags used whenever a page leaves a field blank.",
-};
-
-export default async function SiteGlobalsPage({ params }: { params: Promise<{ siteId: string }> }) {
+export default async function SiteGlobalsPage({
+  params,
+}: {
+  params: Promise<{ siteId: string }>;
+}) {
   const { siteId } = await params;
-  await requireView("globals.view");
+  const actor = await requireView("globals.view", `/admin/sites/${siteId}/globals`);
   const site = await getSite(siteId);
   if (!site) notFound();
-  const contents = await listSiteContents(siteId);
-  const kinds: GlobalKind[] = ["navigation", "footer", "defaults"];
+
+  await ensureDefaultGlobals(siteId, site.name);
+  const rows = await listSiteContents(siteId);
+  const canManage = can(actor, "globals.edit");
 
   return (
-    <div>
-      <PageHeader
-        title="Global content"
-        description="Header, footer and default tags are edited once per site. Each keeps its own draft until you publish it."
-        breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Global content" }]}
-      />
-      <div className="grid gap-4 md:grid-cols-3">
-        {kinds.map((kind) => {
-          const content = contents.find((row) => row.kind === kind);
-          const draft = content?.draftDocument ?? null;
-          const published = content?.publishedDocument ?? null;
-          const dirty = Boolean(draft) && JSON.stringify(draft) !== JSON.stringify(published);
-          return (
-            <Panel key={kind} title={GLOBAL_LABELS[kind]} description={DESCRIPTIONS[kind]}>
-              <div className="space-y-2 text-[12px] text-slate-500">
-                <p className="flex items-center gap-2">
-                  <StatusBadge status={published ? "published" : "draft"} label={published ? "Published" : "Defaults"} />
-                  {dirty ? <span className="badge badge-amber">Unpublished changes</span> : null}
-                </p>
-                <p>
-                  {draft ? `${draft.content.length} block${draft.content.length === 1 ? "" : "s"} in the draft` : "Nothing drafted yet"}
-                </p>
-                <p>
-                  {content?.publishedAt
-                    ? `Published ${relativeTime(content.publishedAt)}`
-                    : "Never published — built-in defaults are used"}
-                </p>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Link
-                  href={kind === "defaults" ? `/admin/sites/${siteId}/globals/defaults` : `/edit/${siteId}/globals/${kind}`}
-                  className="btn-admin btn-admin-primary !py-1.5 !text-xs"
-                >
-                  {kind === "defaults" ? "Edit tags" : "Edit in visual editor"}
-                </Link>
-              </div>
-            </Panel>
-          );
-        })}
-      </div>
+    <div className="space-y-6">
       <Panel
-        className="mt-5"
-        title="How global content reaches visitors"
-        description="The renderer resolves the published globals on every request, then caches the site document under site:{id}:globals."
+        title="Site-wide global content"
+        description="Edited in the same visual canvas as pages. Publishing updates every live page on this site."
+        actions={
+          canManage ? (
+            <Link
+              href={`/admin/sites/${siteId}/globals/defaults`}
+              className={adminButtonVariants({ tone: "secondary", size: "sm" })}
+            >
+              Reset to defaults
+            </Link>
+          ) : null
+        }
       >
-        <ul className="space-y-1.5 text-[13px] text-slate-600">
-          <li>· Publishing globals clears every page cache for the site in the same request.</li>
-          <li>· A page can hide the header or footer individually from its editor root settings.</li>
-          <li>· Staff previews always show the draft, never the published copy.</li>
-        </ul>
+        <div className="divide-y divide-slate-200">
+          {rows.map((row) => {
+            const info = GLOBAL_INFO[row.kind];
+            const blockCount = row.draftDocument?.content?.length ?? 0;
+            return (
+              <div
+                key={row.kind}
+                className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0"
+              >
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-950">{info.label}</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">{info.description}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {blockCount} block{blockCount === 1 ? "" : "s"} | updated{" "}
+                    {relativeTime(row.updatedAt)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/preview/${siteId}/globals/${row.kind}`}
+                    target="_blank"
+                    className={adminButtonVariants({ tone: "secondary", size: "sm" })}
+                  >
+                    Preview
+                  </Link>
+                  <Link
+                    href={`/edit/${siteId}/globals/${row.kind}`}
+                    className={adminButtonVariants({ tone: "primary", size: "sm" })}
+                  >
+                    {canManage ? "Edit" : "View"}
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </Panel>
     </div>
   );

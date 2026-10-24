@@ -3,12 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { staffInvites, staffResetLinks, users } from "@/lib/db/schema";
+import { staffInvites, users } from "@/lib/db/schema";
 import { assertRoleCeiling, requirePermission, requireStepUp } from "@/lib/auth/session";
 import { issueInviteToken } from "@/lib/actions/auth";
-import { countActiveStaffAtRank, getRole, getRoleByKey, listSessions, revokeSessionById } from "@/lib/auth/rbac";
+import {
+  countActiveStaffAtRank,
+  getRole,
+  getRoleByKey,
+  listSessions,
+  revokeSessionById,
+} from "@/lib/auth/rbac";
 import {
   assignRole,
   banAccount,
@@ -20,7 +26,7 @@ import {
   unbanAccount,
 } from "@/lib/auth/mutations";
 import { checkPasswordStrength } from "@/lib/auth/password";
-import { auth } from "@/lib/auth/server";
+import { auth, registerResetIntercept } from "@/lib/auth/server";
 import { recordAudit } from "@/lib/audit";
 
 export type ActionState = {
@@ -44,30 +50,43 @@ async function targetUser(userId: string) {
   return target;
 }
 
-async function assertAdminRemains(userId: string, nextRoleKey: string, action: string) {
-  const next = await getRoleByKeyOrThrow(nextRoleKey);
-  if (next.rank >= ADMIN_RANK) return;
-  const others = await countActiveStaffAtRank(ADMIN_RANK, userId);
-  if (others === 0) throw new Error(`This would leave the platform with no active admin, so ${action} is refused.`);
-}
-
 async function getRoleByKeyOrThrow(key: string) {
   const role = await getRoleByKey(key);
   if (!role) throw new Error("That role no longer exists.");
   return role;
 }
 
-export async function inviteStaffAction(input: { email: string; roleId: string }): Promise<ActionState> {
+async function assertAdminRemains(userId: string, nextRoleKey: string, action: string) {
+  const next = await getRoleByKeyOrThrow(nextRoleKey);
+  if (next.rank >= ADMIN_RANK) return;
+  const others = await countActiveStaffAtRank(ADMIN_RANK, userId);
+  if (others === 0) {
+    throw new Error(
+      `This would leave the platform with no active administrator, so ${action} is refused.`,
+    );
+  }
+}
+
+export async function inviteStaffAction(input: {
+  email: string;
+  roleId: string;
+}): Promise<ActionState> {
   try {
     const actor = await requirePermission("staff.invite");
     await ensureDb();
     const email = input.email.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Enter a valid email address.");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new Error("Enter a valid email address.");
+    }
     const role = await getRole(input.roleId);
     if (!role) throw new Error("Pick a role.");
     assertRoleCeiling(actor, role.rank, "invite someone to");
 
-    const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    const [existingUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
     if (existingUser) throw new Error("That person already has an account.");
 
     const { invite, token } = await issueInviteToken(email, role.id, actor.user.id);
@@ -93,7 +112,11 @@ export async function revokeInviteAction(inviteId: string): Promise<ActionState>
   try {
     const actor = await requirePermission("staff.invite");
     await ensureDb();
-    const [invite] = await db.select().from(staffInvites).where(eq(staffInvites.id, inviteId)).limit(1);
+    const [invite] = await db
+      .select()
+      .from(staffInvites)
+      .where(eq(staffInvites.id, inviteId))
+      .limit(1);
     if (!invite) throw new Error("Invitation not found.");
     await db
       .update(staffInvites)
@@ -117,11 +140,19 @@ export async function resendInviteAction(inviteId: string): Promise<ActionState>
   try {
     const actor = await requirePermission("staff.invite");
     await ensureDb();
-    const [invite] = await db.select().from(staffInvites).where(eq(staffInvites.id, inviteId)).limit(1);
+    const [invite] = await db
+      .select()
+      .from(staffInvites)
+      .where(eq(staffInvites.id, inviteId))
+      .limit(1);
     if (!invite) throw new Error("Invitation not found.");
     const { token } = await issueInviteToken(invite.email, invite.roleId, actor.user.id);
     revalidatePath("/admin/team");
-    return { ok: true, message: "A fresh link replaces the old one.", inviteUrl: `/invite/${token}` };
+    return {
+      ok: true,
+      message: "A fresh invitation link replaces the old one.",
+      inviteUrl: `/invite/${token}`,
+    };
   } catch (error) {
     return failure(error);
   }
@@ -139,7 +170,9 @@ export async function createStaffAccountAction(input: {
     const name = input.name.trim();
     const email = input.email.trim().toLowerCase();
     if (name.length < 2) throw new Error("Enter the person's full name.");
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Enter a valid email address.");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new Error("Enter a valid email address.");
+    }
     const role = await getRole(input.roleId);
     if (!role) throw new Error("Pick a role.");
     assertRoleCeiling(actor, role.rank, "create an account at");
@@ -157,20 +190,26 @@ export async function createStaffAccountAction(input: {
 
     await recordAudit({
       action: "account_created",
-      summary: `Created the account for ${email} on the ${role.name} role`,
+      summary: `Created account for ${email} on the ${role.name} role`,
       actor,
       targetType: "user",
       targetId: user.id,
       detail: { role: role.key },
     });
     revalidatePath("/admin/team");
-    return { ok: true, message: `${name} can sign in now and will be asked to choose a new password.` };
+    return {
+      ok: true,
+      message: `${name} can sign in now and will be asked to choose a new password.`,
+    };
   } catch (error) {
     return failure(error);
   }
 }
 
-export async function setMemberRoleAction(input: { userId: string; roleId: string }): Promise<ActionState> {
+export async function setMemberRoleAction(input: {
+  userId: string;
+  roleId: string;
+}): Promise<ActionState> {
   try {
     const actor = await requirePermission("staff.manage");
     await requireStepUp(actor);
@@ -183,7 +222,7 @@ export async function setMemberRoleAction(input: { userId: string; roleId: strin
     if (target.id === actor.user.id && role.rank < current.rank) {
       throw new Error("You cannot lower your own role.");
     }
-    await assertAdminRemains(input.userId, role.key, "removing the last admin");
+    await assertAdminRemains(input.userId, role.key, "removing the last administrator");
 
     if (role.key === target.role) {
       return { ok: true, message: `${target.name} already holds ${role.name}.` };
@@ -192,7 +231,7 @@ export async function setMemberRoleAction(input: { userId: string; roleId: strin
     await assignRole(input.userId, role.key, await headers());
     await recordAudit({
       action: "roles_assigned",
-      summary: `Role for ${target.name}: ${current.name} → ${role.name}`,
+      summary: `Role for ${target.name} changed from ${current.name} to ${role.name}`,
       actor,
       targetType: "user",
       targetId: input.userId,
@@ -205,7 +244,10 @@ export async function setMemberRoleAction(input: { userId: string; roleId: strin
   }
 }
 
-export async function banMemberAction(input: { userId: string; reason: string }): Promise<ActionState> {
+export async function banMemberAction(input: {
+  userId: string;
+  reason: string;
+}): Promise<ActionState> {
   try {
     const actor = await requirePermission("staff.manage");
     await requireStepUp(actor);
@@ -215,10 +257,16 @@ export async function banMemberAction(input: { userId: string; reason: string })
     assertRoleCeiling(actor, targetRole.rank, "ban someone holding");
     if (targetRole.rank >= ADMIN_RANK) {
       const others = await countActiveStaffAtRank(ADMIN_RANK, target.id);
-      if (others === 0) throw new Error("This is the last active admin, so it cannot be banned.");
+      if (others === 0) {
+        throw new Error("This is the last active administrator, so it cannot be banned.");
+      }
     }
 
-    await banAccount(input.userId, input.reason.trim() || "Suspended by an administrator", await headers());
+    await banAccount(
+      input.userId,
+      input.reason.trim() || "Suspended by an administrator",
+      await headers(),
+    );
     await recordAudit({
       action: "account_suspended",
       summary: `Banned ${target.name}${input.reason.trim() ? `: ${input.reason.trim()}` : ""}`,
@@ -253,7 +301,9 @@ export async function unbanMemberAction(input: { userId: string }): Promise<Acti
   }
 }
 
-export async function resetUserPasswordAction(input: { userId: string }): Promise<ActionState> {
+export async function resetUserPasswordAction(input: {
+  userId: string;
+}): Promise<ActionState> {
   try {
     const actor = await requirePermission("staff.manage");
     await requireStepUp(actor);
@@ -261,17 +311,23 @@ export async function resetUserPasswordAction(input: { userId: string }): Promis
     const targetRole = await getRoleByKeyOrThrow(target.role);
     assertRoleCeiling(actor, targetRole.rank, "reset the password of someone holding");
 
-    await auth.api.requestPasswordReset({
-      body: { email: target.email, redirectTo: "/reset-password" },
-      headers: await headers(),
+    let capturedUrl: string | null = null;
+    const unregister = registerResetIntercept(target.email, (url) => {
+      capturedUrl = url;
     });
-    const [link] = await db
-      .select()
-      .from(staffResetLinks)
-      .where(eq(staffResetLinks.userId, target.id))
-      .orderBy(desc(staffResetLinks.createdAt))
-      .limit(1);
-    if (!link) throw new Error("The reset link could not be created.");
+
+    try {
+      await auth.api.requestPasswordReset({
+        body: { email: target.email, redirectTo: "/reset-password" },
+        headers: await headers(),
+      });
+    } finally {
+      unregister();
+    }
+
+    if (!capturedUrl) {
+      throw new Error("The reset link could not be generated.");
+    }
 
     await recordAudit({
       action: "password_reset_requested",
@@ -283,8 +339,8 @@ export async function resetUserPasswordAction(input: { userId: string }): Promis
     revalidatePath("/admin/team");
     return {
       ok: true,
-      message: `Single-use reset link for ${target.email}. It works once and expires in an hour.`,
-      resetUrl: link.url,
+      message: `Single-use reset link for ${target.email}. Copy it now; it is never stored in plaintext and expires in one hour.`,
+      resetUrl: capturedUrl,
     };
   } catch (error) {
     return failure(error);
@@ -315,23 +371,35 @@ export async function setTemporaryPasswordAction(input: {
       targetId: input.userId,
     });
     revalidatePath("/admin/team");
-    return { ok: true, message: `${target.name} must choose a new password at the next sign-in.` };
+    return {
+      ok: true,
+      message: `${target.name} must choose a new password at next sign-in.`,
+    };
   } catch (error) {
     return failure(error);
   }
 }
 
-export async function impersonateMemberAction(input: { userId: string }): Promise<ActionState> {
+export async function impersonateMemberAction(input: {
+  userId: string;
+}): Promise<ActionState> {
   try {
     const actor = await requirePermission("staff.manage");
     await requireStepUp(actor);
     const target = await targetUser(input.userId);
-    if (target.id === actor.user.id) throw new Error("You are already signed in as yourself.");
+    if (target.id === actor.user.id) {
+      throw new Error("You are already signed in as yourself.");
+    }
     const targetRole = await getRoleByKeyOrThrow(target.role);
     assertRoleCeiling(actor, targetRole.rank, "view the account of someone holding");
-    if (target.banned) throw new Error("Lift the ban before viewing the platform as this person.");
+    if (target.banned) {
+      throw new Error("Lift the ban before viewing the platform as this person.");
+    }
 
-    await auth.api.impersonateUser({ body: { userId: input.userId }, headers: await headers() });
+    await auth.api.impersonateUser({
+      body: { userId: input.userId },
+      headers: await headers(),
+    });
     await recordAudit({
       action: "signed_in",
       summary: `Started an impersonation session for ${target.name}`,
@@ -356,12 +424,16 @@ export async function removeMemberAction(input: { userId: string }): Promise<Act
     const actor = await requirePermission("staff.manage");
     await requireStepUp(actor);
     const target = await targetUser(input.userId);
-    if (target.id === actor.user.id) throw new Error("You cannot delete your own account.");
+    if (target.id === actor.user.id) {
+      throw new Error("You cannot delete your own account.");
+    }
     const targetRole = await getRoleByKeyOrThrow(target.role);
     assertRoleCeiling(actor, targetRole.rank, "delete someone holding");
     if (targetRole.rank >= ADMIN_RANK) {
       const others = await countActiveStaffAtRank(ADMIN_RANK, target.id);
-      if (others === 0) throw new Error("This is the last active admin, so it cannot be deleted.");
+      if (others === 0) {
+        throw new Error("This is the last active administrator, so it cannot be deleted.");
+      }
     }
     await removeAccount(input.userId, await headers());
     await recordAudit({
@@ -378,9 +450,11 @@ export async function removeMemberAction(input: { userId: string }): Promise<Act
   }
 }
 
-export async function revokeUserSessionAction(input: { sessionId: string }): Promise<ActionState> {
+export async function revokeUserSessionAction(input: {
+  sessionId: string;
+}): Promise<ActionState> {
   try {
-    const actor = await requirePermission("session.revoke");
+    const actor = await requirePermission("staff.manage");
     await ensureDb();
     const rows = await listSessions();
     const target = rows.find((session) => session.id === input.sessionId);
@@ -403,9 +477,11 @@ export async function revokeUserSessionAction(input: { sessionId: string }): Pro
   }
 }
 
-export async function revokeAllUserSessionsAction(input: { userId: string }): Promise<ActionState> {
+export async function revokeAllUserSessionsAction(input: {
+  userId: string;
+}): Promise<ActionState> {
   try {
-    const actor = await requirePermission("session.revoke");
+    const actor = await requirePermission("staff.manage");
     const target = await targetUser(input.userId);
     await revokeAllSessions(input.userId, await headers());
     await recordAudit({
@@ -423,7 +499,7 @@ export async function revokeAllUserSessionsAction(input: { userId: string }): Pr
 }
 
 export async function listLiveSessions() {
-  await requirePermission("session.view");
+  await requirePermission("staff.view");
   const rows = await listSessions();
   return rows.map((session) => ({
     id: session.id,

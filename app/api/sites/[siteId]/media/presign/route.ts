@@ -1,45 +1,70 @@
-import { NextResponse } from "next/server";
-import { can, getActor } from "@/lib/auth/session";
-import { consumeRateLimit } from "@/lib/cache";
-import { beginUpload, MAX_IMAGE_BYTES } from "@/lib/media";
+import { can } from "@/lib/auth/permissions";
+import { getActor } from "@/lib/auth/session";
+import { requestMediaUpload } from "@/lib/media";
+import { methodNotAllowed, problemFromError, problemResponse } from "@/lib/problem";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request, { params }: { params: Promise<{ siteId: string }> }) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ siteId: string }> },
+) {
+  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
   const actor = await getActor();
-  if (!actor) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  if (!can(actor, "editor")) {
-    return NextResponse.json({ error: "Your role cannot upload media." }, { status: 403 });
+  if (!actor) {
+    return problemResponse({
+      status: 401,
+      title: "Authentication required",
+      detail: "Sign in before starting an upload.",
+      requestId,
+    });
   }
-  if (!consumeRateLimit(`upload:${actor.user.id}`, 60, 3600)) {
-    return NextResponse.json({ error: "That is 60 uploads this hour. Slow down a little." }, { status: 429 });
+  if (!can(actor, "media.upload")) {
+    return problemResponse({
+      status: 403,
+      title: "Forbidden",
+      detail: "Your role does not include media.upload.",
+      requestId,
+    });
   }
-
-  const { siteId } = await params;
-  const body = (await request.json().catch(() => ({}))) as {
-    filename?: string;
-    contentType?: string;
-    size?: number;
-  };
 
   try {
-    const upload = await beginUpload({
+    const { siteId } = await params;
+    const body = (await request.json().catch(() => ({}))) as {
+      filename?: string;
+      contentType?: string;
+      size?: number;
+      checksum?: string;
+      altText?: string;
+    };
+
+    const grant = await requestMediaUpload({
       siteId,
       filename: body.filename ?? "upload",
-      contentType: body.contentType ?? "application/octet-stream",
+      mimeType: body.contentType ?? "application/octet-stream",
       sizeBytes: Number(body.size ?? 0),
+      checksum: body.checksum,
+      altText: body.altText,
       actor,
     });
-    return NextResponse.json({
-      ...upload,
 
-      direct: upload.uploadUrl !== null,
-      maxBytes: MAX_IMAGE_BYTES,
+    return Response.json(grant, {
+      status: 200,
+      headers: { "X-Request-Id": requestId },
     });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not start the upload." },
-      { status: 400 },
-    );
+  } catch (err) {
+    return problemFromError(err, requestId);
   }
+}
+
+export function GET(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
+}
+
+export function PUT(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
+}
+
+export function DELETE(request: Request) {
+  return methodNotAllowed(["POST"], request.headers.get("x-request-id") ?? undefined);
 }

@@ -1,11 +1,11 @@
+import "server-only";
 import { cache } from "react";
-import { normalizePath } from "@/lib/documents";
+import { normalizePath, type PageDocument, type PageSeo, type SiteTheme } from "@/lib/documents";
 import { getSite, resolveHost } from "@/lib/sites";
-import { getPageBySlug, getPublishedDocument } from "@/lib/pages";
+import { getPageBySlug, getPublishedDocument, listPages } from "@/lib/pages";
 import { getDefaultSeo, getPublishedGlobals } from "@/lib/globals";
 import { getMedia, mediaMapFor } from "@/lib/media";
 import { resolveDocumentMedia } from "@/lib/registry";
-import type { PageDocument, PageSeo, SiteTheme } from "@/lib/documents";
 import type { Page, Site } from "@/lib/db/schema";
 import type { ResolvedMedia } from "@/lib/media/refs";
 
@@ -80,6 +80,24 @@ export const loadPublicPage = cache(async (host: string, rawPath: string): Promi
   };
 });
 
+export async function resolveSiteForHost(host: string | null): Promise<Site | null> {
+  if (!host) return null;
+  const res = await resolveHost(host);
+  return res?.canServe ? res.site : null;
+}
+
+export async function listPublishedSlugsForSite(
+  siteId: string,
+): Promise<Array<{ slug: string; updatedAt: Date }>> {
+  const rows = await listPages(siteId);
+  return rows
+    .filter((p) => p.status === "published" && p.publishedVersionId)
+    .map((p) => ({
+      slug: p.isHomepage || p.slug === "/" ? "" : p.slug.replace(/^\/+/, ""),
+      updatedAt: p.updatedAt,
+    }));
+}
+
 export const loadPreviewPage = cache(async (siteId: string, rawPath: string) => {
   const site = await getSite(siteId);
   if (!site) return { kind: "not_found" as const, reason: "no-site" };
@@ -110,7 +128,10 @@ export const loadPreviewPage = cache(async (siteId: string, rawPath: string) => 
   };
 });
 
-export function mediaRefUrl(media: Map<string, ResolvedMedia>, ref: { id?: string } | null | undefined): string | null {
+export function mediaRefUrl(
+  media: Map<string, ResolvedMedia>,
+  ref: { id?: string } | null | undefined,
+): string | null {
   if (!ref?.id) return null;
   return media.get(ref.id)?.url ?? null;
 }

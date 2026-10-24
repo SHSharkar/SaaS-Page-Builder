@@ -105,7 +105,7 @@ export async function deleteRoleAction(input: { roleId: string }): Promise<RoleA
       targetId: input.roleId,
     });
     revalidatePath("/admin/roles");
-    return { ok: true, message: `The ${role.name} role is gone.` };
+    return { ok: true, message: `The ${role.name} role has been deleted.` };
   } catch (error) {
     return failure(error);
   }

@@ -1,33 +1,44 @@
+import Link from "next/link";
+import { inspectInviteToken } from "@/lib/actions/auth";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { AcceptInviteForm } from "@/components/auth/accept-invite-form";
-import { currentInvite } from "@/lib/actions/auth";
 
-export const metadata = { title: "Accept invitation" };
 export const dynamic = "force-dynamic";
 
-export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
+export default async function InvitePage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
   const { token } = await params;
-  const invite = await currentInvite(token);
+  const invite = await inspectInviteToken(token);
 
   if (!invite) {
     return (
       <AuthShell
-        eyebrow="Invitation"
-        title="This link is no longer active"
-        description="Invitations are single use and expire after seven days. Ask an admin to send a fresh one."
+        eyebrow="Staff invitation"
+        title="Invitation unavailable"
+        description="This link is expired, revoked, or has already been used."
       >
-        <a href="/sign-in" className="btn-admin btn-admin-primary w-full">
-          Go to sign-in
-        </a>
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs leading-relaxed text-amber-900">
+          Ask an administrator on the Team page to generate a fresh seven-day invitation link.
+        </p>
+        <p className="mt-4 text-xs text-slate-500">
+          Already set up?{" "}
+          <Link href="/sign-in" className="font-semibold text-slate-950 underline">
+            Sign in instead
+          </Link>
+          .
+        </p>
       </AuthShell>
     );
   }
 
   return (
     <AuthShell
-      eyebrow="You are invited"
-      title={`Join as ${invite.roleName}`}
-      description={`Set up your account for ${invite.email}. The link works once and expires ${invite.expiresAt.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}.`}
+      eyebrow="Staff invitation"
+      title="Finish setting up your account"
+      description="Choose a strong password to claim your staff workspace invitation."
     >
       <AcceptInviteForm token={token} email={invite.email} />
     </AuthShell>

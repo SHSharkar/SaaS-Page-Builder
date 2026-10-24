@@ -1,87 +1,90 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { can, requireView } from "@/lib/auth/session";
 import { getSite } from "@/lib/sites";
-import { listImportJobs } from "@/lib/importer";
-import { requireView } from "@/lib/auth/session";
-import { PageHeader, Panel, StatusBadge, relativeTime, EmptyState } from "@/components/admin/ui";
-import { ImportUpload } from "@/components/admin/import-upload";
+import { listSiteImports, type ImportReport } from "@/lib/importer";
+import { Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
+import { ImportStarter } from "@/components/admin/import-starter";
+import { adminButtonVariants } from "@/lib/theme-classes";
 
-export const dynamic = "force-dynamic";
-
-export default async function SiteImportsPage({ params }: { params: Promise<{ siteId: string }> }) {
+export default async function SiteImportsPage({
+  params,
+}: {
+  params: Promise<{ siteId: string }>;
+}) {
   const { siteId } = await params;
-  await requireView("import.view");
+  const actor = await requireView("page.view", `/admin/sites/${siteId}/imports`);
   const site = await getSite(siteId);
   if (!site) notFound();
-  const jobs = await listImportJobs(siteId);
-  const reviewable = jobs.filter((job) => job.status === "in_review" || job.status === "mapped");
+
+  const jobs = await listSiteImports(siteId);
+  const canCreate = can(actor, "import.create");
 
   return (
-    <div>
-      <PageHeader
-        title="Imports"
-        description="Bring in an existing landing page as HTML. The analyser proposes a component mapping; a reviewer must approve every section before a draft exists."
-        breadcrumb={[{ label: site.name, href: `/admin/sites/${siteId}` }, { label: "Imports" }]}
-      />
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
-        <Panel title="New import" description="Five megabyte cap, one file at a time, twenty per staff member per day.">
-          <ImportUpload siteId={siteId} />
+    <div className="space-y-6">
+      {canCreate ? (
+        <Panel
+          title="Import static HTML into blocks"
+          description="Parses legacy HTML into structured sections, strips scripts and event handlers, and opens a review screen before creating a draft."
+        >
+          <ImportStarter siteId={siteId} canCreate={canCreate} />
         </Panel>
-        <div className="space-y-4">
-          {reviewable.length ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
-              {reviewable.length} import{reviewable.length === 1 ? "" : "s"} waiting for review.{" "}
-              <Link href={`/admin/sites/${siteId}/imports/${reviewable[0].id}`} className="font-semibold underline">
-                Review the newest
-              </Link>
-              .
-            </div>
-          ) : null}
+      ) : null}
 
-          <Panel title="History" description="Every analysis is kept, including the ones you discard.">
-            {jobs.length === 0 ? (
-              <EmptyState title="No imports yet" description="Upload an HTML file to see how the analyser maps it onto the component library." />
-            ) : (
-              <ul className="divide-y divide-line">
-                {jobs.map((job) => (
-                  <li key={job.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-[13px] font-medium text-ink-900">{job.sourceName}</span>
-                        <StatusBadge status={job.status} />
-                      </div>
-                      <p className="text-[11px] text-slate-400">
-                        {job.mappingResult
-                          ? `${job.mappingResult.counts.mapped}/${job.mappingResult.counts.sections} sections mapped · `
-                          : ""}
-                        {relativeTime(job.createdAt)}
-                      </p>
-                      {job.failureReason ? (
-                        <p className="mt-1 text-[11px] text-red-600">{job.failureReason}</p>
-                      ) : null}
-                    </div>
-                    {job.status === "in_review" || job.status === "mapped" ? (
+      <Panel
+        title={`Import jobs (${jobs.length})`}
+        description="Completed and pending HTML conversion jobs for this site."
+      >
+        {jobs.length === 0 ? (
+          <p className="text-xs text-slate-500">No HTML imports have been run on this site yet.</p>
+        ) : (
+          <div className="divide-y divide-slate-200">
+            {jobs.map((job) => {
+              const report = job.report as ImportReport | null;
+              return (
+                <div
+                  key={job.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs first:pt-0 last:pb-0"
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <Link
                         href={`/admin/sites/${siteId}/imports/${job.id}`}
-                        className="btn-admin btn-admin-primary !px-2.5 !py-1 !text-[11px]"
+                        className="font-semibold text-slate-950 hover:underline"
                       >
-                        Review
+                        {job.sourceFilename}
                       </Link>
-                    ) : job.status === "applied" && job.producedPageId ? (
+                      <StatusBadge status={job.status} />
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {report
+                        ? `${report.mappedCount} mapped | ${report.unmappedCount} unmapped | ${report.strippedCount} stripped`
+                        : "Queued for analysis"}{" "}
+                      | {relativeTime(job.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {job.targetPageId ? (
                       <Link
-                        href={`/edit/${siteId}/${job.producedPageId}`}
-                        className="btn-admin btn-admin-secondary !px-2.5 !py-1 !text-[11px]"
+                        href={`/edit/${siteId}/${job.targetPageId}`}
+                        className={adminButtonVariants({ tone: "secondary", size: "sm" })}
                       >
-                        Open page
+                        Open draft
                       </Link>
                     ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
-        </div>
-      </div>
+                    <Link
+                      href={`/admin/sites/${siteId}/imports/${job.id}`}
+                      className={adminButtonVariants({ tone: "primary", size: "sm" })}
+                    >
+                      Review
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

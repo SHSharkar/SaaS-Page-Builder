@@ -1,5 +1,11 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { lookupMedia } from "@/lib/media/refs";
+import {
+  SITE_EYEBROW,
+  SITE_MEDIA_PLACEHOLDER,
+  cn,
+  siteButton,
+} from "@/lib/theme-classes";
 import type { Appearance } from "./types";
 
 const SPACING: Record<Appearance["spacing"], string> = {
@@ -10,42 +16,24 @@ const SPACING: Record<Appearance["spacing"], string> = {
   xl: "py-28",
 };
 
-const WIDTH: Record<Appearance["width"], string> = {
-  narrow: "max-w-[780px]",
-  default: "max-w-[1160px]",
-  wide: "max-w-[1400px]",
-  full: "max-w-none",
+const WIDTH_PADDING: Record<Appearance["width"], string> = {
+  narrow: "px-6 sm:px-14 lg:px-24",
+  default: "px-5 sm:px-8",
+  wide: "px-4 sm:px-6",
+  full: "px-0",
 };
 
-const BACKGROUNDS: Record<Appearance["background"], CSSProperties | null> = {
-  inherit: null,
-  transparent: { background: "transparent" },
-  surface: { background: "var(--site-surface)" },
-  accent: {
-    background: "var(--site-accent)",
-    color: "var(--site-accent-contrast)",
-    ["--site-text" as string]: "var(--site-accent-contrast)",
-    ["--site-muted" as string]: "color-mix(in srgb, var(--site-accent-contrast) 72%, transparent)",
-    ["--site-surface" as string]: "color-mix(in srgb, var(--site-accent-contrast) 10%, var(--site-accent))",
-    ["--site-border" as string]: "color-mix(in srgb, var(--site-accent-contrast) 24%, var(--site-accent))",
-  },
-  muted: { background: "color-mix(in srgb, var(--site-surface) 55%, var(--site-bg))" },
-  dark: {
-    background: "#05080f",
-    color: "#f4f6fb",
-    ["--site-text" as string]: "#f4f6fb",
-    ["--site-muted" as string]: "#9aa4bb",
-    ["--site-surface" as string]: "#121a2b",
-    ["--site-border" as string]: "#243049",
-  },
-  light: {
-    background: "#f5f7fb",
-    color: "#0f172a",
-    ["--site-text" as string]: "#0f172a",
-    ["--site-muted" as string]: "#5b6577",
-    ["--site-surface" as string]: "#ffffff",
-    ["--site-border" as string]: "#dbe1ec",
-  },
+const BACKGROUNDS: Record<Appearance["background"], string> = {
+  inherit: "",
+  transparent: "bg-transparent",
+  surface: "bg-site-surface text-site-text",
+  accent:
+    "bg-site-accent text-site-accent-contrast [--color-site-text:var(--color-site-accent-contrast)] [--color-site-muted:var(--color-site-accent-contrast)]",
+  muted: "bg-site-surface/60 text-site-text",
+  dark:
+    "bg-ink-950 text-slate-100 [--color-site-text:#f4f6fb] [--color-site-muted:#9aa4bb] [--color-site-surface:#121a2b] [--color-site-border:#243049]",
+  light:
+    "bg-slate-50 text-slate-900 [--color-site-text:#0f172a] [--color-site-muted:#475569] [--color-site-surface:#ffffff] [--color-site-border:#dbe1ec]",
 };
 
 const VISIBILITY: Record<Appearance["visibility"], string> = {
@@ -73,18 +61,18 @@ export function Section({
     visibility: appearance?.visibility ?? "all",
     anchor: appearance?.anchor ?? "",
   };
-  const bgStyle = BACKGROUNDS[a.background];
   return (
     <Tag
       id={a.anchor || undefined}
       data-block-section=""
-      className={`${SPACING[a.spacing]} ${VISIBILITY[a.visibility]} ${className}`}
-      style={bgStyle ?? undefined}
+      className={cn(SPACING[a.spacing], VISIBILITY[a.visibility], BACKGROUNDS[a.background], className)}
     >
       <div
-        className={`mx-auto ${WIDTH[a.width]} px-5 sm:px-8 ${
-          a.align === "center" ? "text-center" : ""
-        }`}
+        className={cn(
+          "mx-auto w-full",
+          WIDTH_PADDING[a.width],
+          a.align === "center" && "text-center",
+        )}
       >
         {children}
       </div>
@@ -92,7 +80,11 @@ export function Section({
   );
 }
 
-export type LinkValue = { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
+export type LinkValue = {
+  label: string;
+  href: string;
+  style?: "solid" | "outline" | "ghost" | "light";
+};
 
 export function ButtonLink({
   link,
@@ -105,16 +97,13 @@ export function ButtonLink({
 }) {
   if (!link || !link.label) return null;
   const variant = link.style ?? "solid";
-  const sizes = {
-    sm: "px-4 py-2 text-sm",
-    md: "px-5 py-2.5 text-[15px]",
-    lg: "px-7 py-3.5 text-base",
-  } as const;
   return (
     <a
       href={link.href || "#"}
-      className={`btn btn-${variant} ${sizes[size]} ${className}`}
-      data-tracking-placement={link.label ? link.label.toLowerCase().replace(/\s+/g, "-") : undefined}
+      className={cn(siteButton({ variant, size }), className)}
+      data-tracking-placement={
+        link.label ? link.label.toLowerCase().replace(/\s+/g, "-") : undefined
+      }
     >
       {link.label}
     </a>
@@ -123,7 +112,7 @@ export function ButtonLink({
 
 export function Eyebrow({ children }: { children: ReactNode }) {
   if (!children) return null;
-  return <p className="eyebrow">{children}</p>;
+  return <p className={SITE_EYEBROW}>{children}</p>;
 }
 
 export function SectionHeading({
@@ -139,15 +128,15 @@ export function SectionHeading({
 }) {
   if (!eyebrow && !title && !description) return null;
   return (
-    <div className={`mb-10 ${align === "center" ? "text-center mx-auto max-w-2xl" : "max-w-2xl"}`}>
+    <div className={cn("mb-10 w-full", align === "center" && "text-center")}>
       {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
       {title ? (
-        <h2 className="font-heading text-3xl sm:text-4xl leading-tight tracking-tight text-[color:var(--site-text)]">
+        <h2 className="font-heading text-3xl leading-tight tracking-tight text-site-text sm:text-4xl">
           {title}
         </h2>
       ) : null}
       {description ? (
-        <p className="mt-3 text-base leading-relaxed text-[color:var(--site-muted)]">{description}</p>
+        <p className="mt-3 text-base leading-relaxed text-site-muted">{description}</p>
       ) : null}
     </div>
   );
@@ -156,21 +145,21 @@ export function SectionHeading({
 export function Stars({ rating, size = 14 }: { rating: number; size?: number }) {
   const rounded = Math.round(Math.max(0, Math.min(5, rating)) * 2) / 2;
   return (
-    <span className="inline-flex items-center gap-0.5 align-middle" aria-label={`${rating} out of 5`}>
+    <span className="inline-flex items-center gap-0.5 align-middle text-site-accent" aria-label={`${rating} out of 5`}>
       {[1, 2, 3, 4, 5].map((i) => {
         const fill = rounded >= i ? 1 : rounded >= i - 0.5 ? 0.5 : 0;
         return (
           <svg key={i} width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
             <defs>
               <linearGradient id={`half-${i}-${size}`}>
-                <stop offset="50%" stopColor="var(--site-accent)" />
+                <stop offset="50%" stopColor="currentColor" />
                 <stop offset="50%" stopColor="transparent" />
               </linearGradient>
             </defs>
             <path
               d="M10 1.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L10 14.9l-5.2 2.7 1-5.8L1.6 7.7l5.8-.8z"
-              fill={fill === 1 ? "var(--site-accent)" : fill === 0.5 ? `url(#half-${i}-${size})` : "none"}
-              stroke="var(--site-accent)"
+              fill={fill === 1 ? "currentColor" : fill === 0.5 ? `url(#half-${i}-${size})` : "none"}
+              stroke="currentColor"
               strokeWidth="1.2"
             />
           </svg>
@@ -233,16 +222,28 @@ export function RichText({ text, className = "" }: { text?: string; className?: 
   if (!text) return null;
   const blocks = text.split(/\n{2,}/);
   return (
-    <div className={`rich-text ${className}`}>
+    <div className={cn("space-y-3", className)}>
       {blocks.map((block, index) => {
         const trimmed = block.trim();
         if (!trimmed) return null;
-        if (trimmed.startsWith("### ")) return <h4 key={index}>{inline(trimmed.slice(4))}</h4>;
-        if (trimmed.startsWith("## ")) return <h3 key={index}>{inline(trimmed.slice(3))}</h3>;
+        if (trimmed.startsWith("### ")) {
+          return (
+            <h4 key={index} className="mt-4 font-heading text-lg font-semibold text-site-text">
+              {inline(trimmed.slice(4))}
+            </h4>
+          );
+        }
+        if (trimmed.startsWith("## ")) {
+          return (
+            <h3 key={index} className="mt-5 font-heading text-xl font-semibold text-site-text">
+              {inline(trimmed.slice(3))}
+            </h3>
+          );
+        }
         if (/^[-*] /.test(trimmed)) {
           const items = trimmed.split(/\n/).map((line) => line.replace(/^[-*] /, ""));
           return (
-            <ul key={index}>
+            <ul key={index} className="list-disc space-y-1.5 pl-5">
               {items.map((item, i) => (
                 <li key={i}>{inline(item)}</li>
               ))}
@@ -264,13 +265,19 @@ function inline(text: string): ReactNode[] {
   while ((match = pattern.exec(text))) {
     if (match.index > last) nodes.push(text.slice(last, match.index));
     const token = match[0];
-    if (token.startsWith("**")) nodes.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
-    else if (token.startsWith("*")) nodes.push(<em key={key++}>{token.slice(1, -1)}</em>);
-    else {
+    if (token.startsWith("**")) {
+      nodes.push(
+        <strong key={key++} className="font-semibold text-site-text">
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else if (token.startsWith("*")) {
+      nodes.push(<em key={key++}>{token.slice(1, -1)}</em>);
+    } else {
       const linkMatch = /\[([^\]]+)\]\(([^)]+)\)/.exec(token);
       if (linkMatch) {
         nodes.push(
-          <a key={key++} href={linkMatch[2]}>
+          <a key={key++} href={linkMatch[2]} className="text-site-accent underline">
             {linkMatch[1]}
           </a>,
         );
@@ -300,7 +307,7 @@ export function MediaImage({
   if (!media?.url) {
     return (
       <div
-        className={`media-placeholder ${rounded ? "rounded-[var(--site-radius-md)]" : ""} ${className}`}
+        className={cn(SITE_MEDIA_PLACEHOLDER, rounded && "rounded-site-md", className)}
         role="img"
         aria-label={label || "Image not chosen"}
       >
@@ -315,7 +322,7 @@ export function MediaImage({
       width={media.width ?? undefined}
       height={media.height ?? undefined}
       loading="lazy"
-      className={`${rounded ? "rounded-[var(--site-radius-md)]" : ""} ${className}`}
+      className={cn(rounded && "rounded-site-md", className)}
     />
   );
 }

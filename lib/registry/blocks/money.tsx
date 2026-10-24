@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ButtonLink, Glyph, MediaImage, Section, SectionHeading, Stars } from "../shell";
 import type { BlockDefinition } from "../types";
 import { PricingPlans } from "@/components/blocks/pricing-plans";
+import { SITE_CARD, cn, siteButton } from "@/lib/theme-classes";
 
 const ctaSchema = z
   .object({
@@ -36,7 +37,7 @@ export const bonusCard: BlockDefinition<{
     { key: "logo", label: "Brand logo", type: "image" },
     { key: "badge", label: "Ribbon badge", type: "text", default: "Exclusive" },
     { key: "headline", label: "Bonus headline", type: "text", default: "100% up to $200" },
-    { key: "subline", label: "Sub-line", type: "text", default: "+ 50 free spins on your first deposit" },
+    { key: "subline", label: "Subline", type: "text", default: "+ 50 free spins on your first deposit" },
     { key: "freeSpins", label: "Free spins", type: "text", default: "50" },
     { key: "minDeposit", label: "Minimum deposit", type: "text", default: "$10" },
     { key: "wagering", label: "Wagering", type: "text", default: "35x" },
@@ -45,7 +46,7 @@ export const bonusCard: BlockDefinition<{
       key: "terms",
       label: "Key terms line",
       type: "text",
-      default: "New players · 18+ · 35x wagering on bonus · 7 day expiry",
+      default: "New players . 18+ . 35x wagering on bonus . 7 day expiry",
     },
     { key: "rating", label: "Rating out of 5", type: "number", min: 0, max: 5, default: 4.5 },
     { key: "reviewCount", label: "Review count", type: "text", default: "12,400 reviews" },
@@ -66,7 +67,7 @@ export const bonusCard: BlockDefinition<{
     minDeposit: "$10",
     wagering: "35x",
     maxCashout: "$2,000",
-    terms: "New players · 18+ · 35x wagering on bonus · 7 day expiry",
+    terms: "New players . 18+ . 35x wagering on bonus . 7 day expiry",
     rating: 4.5,
     reviewCount: "12,400 reviews",
     cta: { label: "Claim bonus", href: "/join", style: "solid" },
@@ -110,9 +111,9 @@ export const bonusCard: BlockDefinition<{
     ].filter((stat) => stat.value);
     return (
       <Section appearance={appearance}>
-        <div className="relative overflow-hidden rounded-[var(--site-radius-lg)] border card-surface">
+        <div className={cn("relative overflow-hidden rounded-site-lg border", SITE_CARD)}>
           {badge ? (
-            <span className="absolute right-0 top-0 rounded-bl-[var(--site-radius-md)] bg-[color:var(--site-accent)] px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--site-accent-contrast)]">
+            <span className="absolute right-0 top-0 rounded-bl-site-md bg-site-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-site-accent-contrast">
               {badge}
             </span>
           ) : null}
@@ -123,59 +124,54 @@ export const bonusCard: BlockDefinition<{
                   <MediaImage value={logo} alt={brand} rounded={false} className="h-11 w-11 object-contain" />
                 ) : (
                   <span
-                    className="grid h-11 w-11 place-items-center rounded-[var(--site-radius-sm)] font-heading text-lg font-black"
-                    style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
+                    className="grid h-11 w-11 place-items-center rounded-site-sm bg-site-accent font-heading text-lg font-black text-site-accent-contrast"
                     aria-hidden="true"
                   >
                     {(brand || "T").slice(0, 1)}
                   </span>
                 )}
                 <div>
-                  <p className="font-heading text-lg leading-tight">{brand}</p>
-                  <p className="flex items-center gap-2 text-xs" style={{ color: "var(--site-muted)" }}>
+                  <p className="font-heading text-lg leading-tight text-site-text">{brand}</p>
+                  <p className="flex items-center gap-2 text-xs text-site-muted">
                     <Stars rating={rating} size={12} />
                     {rating ? <span>{rating.toFixed(1)}</span> : null}
-                    {reviewCount ? <span>· {reviewCount}</span> : null}
+                    {reviewCount ? <span>. {reviewCount}</span> : null}
                   </p>
                 </div>
               </div>
-              <p className="mt-5 font-heading text-4xl leading-none tracking-tight sm:text-5xl" style={{ color: "var(--site-text)" }}>
+              <p className="mt-5 font-heading text-4xl leading-none tracking-tight text-site-text sm:text-5xl">
                 {headline}
               </p>
-              {subline ? (
-                <p className="mt-2 text-base" style={{ color: "var(--site-muted)" }}>
-                  {subline}
-                </p>
-              ) : null}
+              {subline ? <p className="mt-2 text-base text-site-muted">{subline}</p> : null}
 
               <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {stats.map((stat) => (
-                  <div key={stat.label} className="rounded-[var(--site-radius-sm)] border p-3" style={{ borderColor: "var(--site-border)" }}>
-                    <dt className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--site-muted)" }}>
+                  <div key={stat.label} className="rounded-site-sm border border-site-border p-3">
+                    <dt className="text-[10px] uppercase tracking-[0.12em] text-site-muted">
                       {stat.label}
                     </dt>
-                    <dd className="mt-1 font-heading text-lg leading-none">{stat.value}</dd>
+                    <dd className="mt-1 font-heading text-lg leading-none text-site-text">
+                      {stat.value}
+                    </dd>
                   </div>
                 ))}
               </dl>
             </div>
-            <div className="flex flex-col justify-between gap-5 lg:border-l lg:pl-8" style={{ borderColor: "var(--site-border)" }}>
-              <ul className="space-y-2 text-sm" style={{ color: "var(--site-muted)" }}>
+            <div className="flex flex-col justify-between gap-5 border-site-border lg:border-l lg:pl-8">
+              <ul className="space-y-2 text-sm text-site-muted">
                 <li className="flex items-center gap-2">
-                  <Glyph name="check" size={15} className="text-[color:var(--site-accent)]" /> Instant bonus credit
+                  <Glyph name="check" size={15} className="text-site-accent" /> Instant bonus credit
                 </li>
                 <li className="flex items-center gap-2">
-                  <Glyph name="shield" size={15} className="text-[color:var(--site-accent)]" /> Licensed and audited
+                  <Glyph name="shield" size={15} className="text-site-accent" /> Licensed and audited
                 </li>
                 <li className="flex items-center gap-2">
-                  <Glyph name="wallet" size={15} className="text-[color:var(--site-accent)]" /> Withdrawals in 24 hours
+                  <Glyph name="wallet" size={15} className="text-site-accent" /> Withdrawals in 24 hours
                 </li>
               </ul>
               <div>
                 <ButtonLink link={cta} size="lg" className="w-full justify-center" />
-                <p className="mt-3 text-[11px] leading-relaxed" style={{ color: "var(--site-muted)" }}>
-                  {terms}
-                </p>
+                <p className="mt-3 text-[11px] leading-relaxed text-site-muted">{terms}</p>
               </div>
             </div>
           </div>
@@ -207,7 +203,12 @@ export const bonusList: BlockDefinition<{
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Top offers" },
     { key: "title", label: "Section title", type: "text", default: "Best welcome bonuses this week" },
-    { key: "description", label: "Description", type: "textarea", default: "Verified terms, no hidden wagering." },
+    {
+      key: "description",
+      label: "Description",
+      type: "textarea",
+      default: "Verified terms, no hidden wagering.",
+    },
     {
       key: "rows",
       label: "Offers",
@@ -250,7 +251,7 @@ export const bonusList: BlockDefinition<{
       {
         brand: "Trofeo Reward",
         offer: "100% up to $200 + 50 spins",
-        detail: "35x wagering · $10 min",
+        detail: "35x wagering . $10 min",
         rating: 4.5,
         ctaLabel: "Claim bonus",
         ctaHref: "/join",
@@ -259,7 +260,7 @@ export const bonusList: BlockDefinition<{
       {
         brand: "Lucky Streak",
         offer: "50 free spins, no deposit",
-        detail: "40x wagering · 7 day expiry",
+        detail: "40x wagering . 7 day expiry",
         rating: 4.2,
         ctaLabel: "Claim spins",
         ctaHref: "/join",
@@ -268,7 +269,7 @@ export const bonusList: BlockDefinition<{
       {
         brand: "Treasure Bay",
         offer: "125% up to $500",
-        detail: "30x wagering · crypto accepted",
+        detail: "30x wagering . crypto accepted",
         rating: 4,
         ctaLabel: "See offer",
         ctaHref: "/join",
@@ -301,35 +302,32 @@ export const bonusList: BlockDefinition<{
         {rows.map((row, index) => (
           <li
             key={index}
-            className="flex flex-col gap-4 rounded-[var(--site-radius-md)] border p-4 sm:flex-row sm:items-center card-surface"
-            style={{
-              borderColor: row.featured === "yes" ? "color-mix(in srgb, var(--site-accent) 60%, var(--site-border))" : "var(--site-border)",
-            }}
+            className={cn(
+              "flex flex-col gap-4 rounded-site-md border bg-site-surface p-4 text-site-text sm:flex-row sm:items-center",
+              row.featured === "yes" ? "border-site-accent" : "border-site-border",
+            )}
           >
-            <span
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full font-heading text-sm font-bold"
-              style={{ background: "color-mix(in srgb, var(--site-accent) 18%, transparent)", color: "var(--site-accent)" }}
-            >
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-site-accent/15 font-heading text-sm font-bold text-site-accent">
               {index + 1}
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-heading text-base">{row.brand}</p>
                 {row.featured === "yes" ? (
-                  <span className="rounded bg-[color:var(--site-accent)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--site-accent-contrast)]">
+                  <span className="rounded bg-site-accent px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-site-accent-contrast">
                     Best value
                   </span>
                 ) : null}
               </div>
-              <p className="mt-0.5 text-sm" style={{ color: "var(--site-muted)" }}>
-                {row.offer} · {row.detail}
+              <p className="mt-0.5 text-sm text-site-muted">
+                {row.offer} . {row.detail}
               </p>
             </div>
-            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--site-muted)" }}>
+            <div className="flex items-center gap-2 text-sm text-site-muted">
               <Stars rating={row.rating} size={13} />
               <span>{row.rating.toFixed(1)}</span>
             </div>
-            <a className="btn btn-solid px-4 py-2 text-sm" href={row.ctaHref || "#"}>
+            <a className={siteButton({ variant: "solid", size: "sm" })} href={row.ctaHref || "#"}>
               {row.ctaLabel}
             </a>
           </li>
@@ -366,7 +364,12 @@ export const casinoCompareTable: BlockDefinition<{
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Compare" },
     { key: "title", label: "Section title", type: "text", default: "Compare the top three" },
     { key: "description", label: "Description", type: "textarea", default: "" },
-    { key: "columns", label: "Column headings", type: "list", default: ["Casino", "Welcome bonus", "Highlights", "Rating"] },
+    {
+      key: "columns",
+      label: "Column headings",
+      type: "list",
+      default: ["Casino", "Welcome bonus", "Highlights", "Rating"],
+    },
     {
       key: "rows",
       label: "Casinos",
@@ -417,9 +420,33 @@ export const casinoCompareTable: BlockDefinition<{
     description: "",
     columns: ["Casino", "Welcome bonus", "Highlights", "Rating"],
     rows: [
-      { casino: "Trofeo Reward", bonus: "100% up to $200", highlights: "24h payouts · 3,000+ games", rating: 4.5, ctaLabel: "Claim", ctaHref: "/join", highlight: "yes" },
-      { casino: "Lucky Streak", bonus: "50 free spins", highlights: "No deposit needed", rating: 4.2, ctaLabel: "Claim", ctaHref: "/join", highlight: "no" },
-      { casino: "Treasure Bay", bonus: "125% up to $500", highlights: "Crypto friendly", rating: 4, ctaLabel: "Claim", ctaHref: "/join", highlight: "no" },
+      {
+        casino: "Trofeo Reward",
+        bonus: "100% up to $200",
+        highlights: "24h payouts . 3,000+ games",
+        rating: 4.5,
+        ctaLabel: "Claim",
+        ctaHref: "/join",
+        highlight: "yes",
+      },
+      {
+        casino: "Lucky Streak",
+        bonus: "50 free spins",
+        highlights: "No deposit needed",
+        rating: 4.2,
+        ctaLabel: "Claim",
+        ctaHref: "/join",
+        highlight: "no",
+      },
+      {
+        casino: "Treasure Bay",
+        bonus: "125% up to $500",
+        highlights: "Crypto friendly",
+        rating: 4,
+        ctaLabel: "Claim",
+        ctaHref: "/join",
+        highlight: "no",
+      },
     ],
     mobileStyle: "cards",
   },
@@ -446,16 +473,15 @@ export const casinoCompareTable: BlockDefinition<{
   render: ({ eyebrow, title, description, columns, rows, mobileStyle, appearance }) => (
     <Section appearance={appearance}>
       <SectionHeading eyebrow={eyebrow} title={title} description={description} />
-      <div className="hidden overflow-hidden rounded-[var(--site-radius-lg)] border md:block" style={{ borderColor: "var(--site-border)" }}>
+      <div className="hidden overflow-hidden rounded-site-lg border border-site-border md:block">
         <table className="w-full border-collapse text-left text-sm">
           <thead>
-            <tr style={{ background: "color-mix(in srgb, var(--site-surface) 80%, var(--site-bg))" }}>
+            <tr className="bg-site-surface/80">
               {columns.map((column, index) => (
                 <th
                   key={index}
                   scope="col"
-                  className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.12em]"
-                  style={{ color: "var(--site-muted)" }}
+                  className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-site-muted"
                 >
                   {column}
                 </th>
@@ -467,28 +493,23 @@ export const casinoCompareTable: BlockDefinition<{
             {rows.map((row, index) => (
               <tr
                 key={index}
-                style={{
-                  background:
-                    row.highlight === "yes"
-                      ? "color-mix(in srgb, var(--site-accent) 10%, var(--site-surface))"
-                      : "var(--site-surface)",
-                  borderTop: "1px solid var(--site-border)",
-                }}
+                className={cn(
+                  "border-t border-site-border text-site-text",
+                  row.highlight === "yes" ? "bg-site-accent/10" : "bg-site-surface",
+                )}
               >
                 <td className="px-4 py-4">
                   <span className="font-heading text-base">{row.casino}</span>
                 </td>
                 <td className="px-4 py-4 font-medium">{row.bonus}</td>
-                <td className="px-4 py-4" style={{ color: "var(--site-muted)" }}>
-                  {row.highlights}
-                </td>
+                <td className="px-4 py-4 text-site-muted">{row.highlights}</td>
                 <td className="px-4 py-4">
                   <span className="flex items-center gap-1.5">
                     <Stars rating={row.rating} size={12} /> {row.rating.toFixed(1)}
                   </span>
                 </td>
                 <td className="px-4 py-4 text-right">
-                  <a className="btn btn-solid px-4 py-2 text-sm" href={row.ctaHref || "#"}>
+                  <a className={siteButton({ variant: "solid", size: "sm" })} href={row.ctaHref || "#"}>
                     {row.ctaLabel}
                   </a>
                 </td>
@@ -497,27 +518,34 @@ export const casinoCompareTable: BlockDefinition<{
           </tbody>
         </table>
       </div>
-      <div className={mobileStyle === "cards" ? "grid gap-3 md:hidden" : "-mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-2 md:hidden"}>
+      <div
+        className={
+          mobileStyle === "cards"
+            ? "grid gap-3 md:hidden"
+            : "-mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-2 md:hidden"
+        }
+      >
         {rows.map((row, index) => (
           <div
             key={index}
-            className={`rounded-[var(--site-radius-md)] border p-4 ${mobileStyle === "cards" ? "" : "min-w-[80%] snap-start"}`}
-            style={{
-              borderColor: row.highlight === "yes" ? "color-mix(in srgb, var(--site-accent) 60%, var(--site-border))" : "var(--site-border)",
-              background: "var(--site-surface)",
-            }}
+            className={cn(
+              "rounded-site-md border bg-site-surface p-4 text-site-text",
+              row.highlight === "yes" ? "border-site-accent" : "border-site-border",
+              mobileStyle !== "cards" && "min-w-[80%] snap-start",
+            )}
           >
             <div className="flex items-center justify-between gap-3">
               <p className="font-heading text-base">{row.casino}</p>
-              <span className="flex items-center gap-1 text-xs" style={{ color: "var(--site-muted)" }}>
+              <span className="flex items-center gap-1 text-xs text-site-muted">
                 <Stars rating={row.rating} size={11} /> {row.rating.toFixed(1)}
               </span>
             </div>
             <p className="mt-2 text-sm font-semibold">{row.bonus}</p>
-            <p className="mt-1 text-xs" style={{ color: "var(--site-muted)" }}>
-              {row.highlights}
-            </p>
-            <a className="btn btn-solid mt-3 w-full justify-center px-4 py-2 text-sm" href={row.ctaHref || "#"}>
+            <p className="mt-1 text-xs text-site-muted">{row.highlights}</p>
+            <a
+              className={cn(siteButton({ variant: "solid", size: "sm" }), "mt-3 w-full justify-center")}
+              href={row.ctaHref || "#"}
+            >
               {row.ctaLabel}
             </a>
           </div>
@@ -548,8 +576,8 @@ export const pricingTable: BlockDefinition<{
   alias: "pricing-table",
   name: "Pricing table",
   group: "money",
-  description: "Plan cards with a monthly/yearly switch, feature lists and a featured tier.",
-  summary: "Plans with monthly/yearly switch",
+  description: "Plan cards with a monthly and yearly switch, feature lists and a featured tier.",
+  summary: "Plans with billing switch",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Plans" },
     { key: "title", label: "Section title", type: "text", default: "Pick the plan that fits" },
@@ -598,9 +626,36 @@ export const pricingTable: BlockDefinition<{
     title: "Pick the plan that fits",
     description: "Switch or cancel any time.",
     plans: [
-      { name: "Free", monthlyPrice: "$0", yearlyPrice: "$0", period: "/month", features: "3 pages\nCommunity support", ctaLabel: "Start free", ctaHref: "/join", featured: "no" },
-      { name: "Studio", monthlyPrice: "$29", yearlyPrice: "$290", period: "/month", features: "Unlimited pages\nCustom domains\nPriority support", ctaLabel: "Choose Studio", ctaHref: "/join", featured: "yes" },
-      { name: "Agency", monthlyPrice: "$79", yearlyPrice: "$790", period: "/month", features: "Everything in Studio\n10 client sites", ctaLabel: "Talk to sales", ctaHref: "/contact", featured: "no" },
+      {
+        name: "Free",
+        monthlyPrice: "$0",
+        yearlyPrice: "$0",
+        period: "/month",
+        features: "3 pages\nCommunity support",
+        ctaLabel: "Start free",
+        ctaHref: "/join",
+        featured: "no",
+      },
+      {
+        name: "Studio",
+        monthlyPrice: "$29",
+        yearlyPrice: "$290",
+        period: "/month",
+        features: "Unlimited pages\nCustom domains\nPriority support",
+        ctaLabel: "Choose Studio",
+        ctaHref: "/join",
+        featured: "yes",
+      },
+      {
+        name: "Agency",
+        monthlyPrice: "$79",
+        yearlyPrice: "$790",
+        period: "/month",
+        features: "Everything in Studio\n10 client sites",
+        ctaLabel: "Talk to sales",
+        ctaHref: "/contact",
+        featured: "no",
+      },
     ],
     monthlyLabel: "Monthly",
     yearlyLabel: "Yearly (save 17%)",
@@ -628,15 +683,11 @@ export const pricingTable: BlockDefinition<{
     yearlyLabel: z.string().catch("Yearly"),
     note: z.string().catch(""),
   }),
-  render: ({ eyebrow, title, description, plans, monthlyLabel, yearlyLabel, note, appearance }: any) => (
+  render: ({ eyebrow, title, description, plans, monthlyLabel, yearlyLabel, note, appearance }) => (
     <Section appearance={appearance}>
       <SectionHeading eyebrow={eyebrow} title={title} description={description} />
       <PricingPlans plans={plans} monthlyLabel={monthlyLabel} yearlyLabel={yearlyLabel} />
-      {note ? (
-        <p className="mt-4 text-center text-xs" style={{ color: "var(--site-muted)" }}>
-          {note}
-        </p>
-      ) : null}
+      {note ? <p className="mt-4 text-center text-xs text-site-muted">{note}</p> : null}
     </Section>
   ),
 };
@@ -665,7 +716,12 @@ export const paymentStrip: BlockDefinition<{
   summary: "Accepted payment icons",
   fields: [
     { key: "title", label: "Title", type: "text", default: "Deposit and withdraw your way" },
-    { key: "methods", label: "Methods", type: "list", default: ["Visa", "Mastercard", "PayPal", "Skrill", "Bitcoin"] },
+    {
+      key: "methods",
+      label: "Methods",
+      type: "list",
+      default: ["Visa", "Mastercard", "PayPal", "Skrill", "Bitcoin"],
+    },
     { key: "note", label: "Note", type: "text", default: "All payments are encrypted and verified." },
   ],
   defaults: {
@@ -679,17 +735,16 @@ export const paymentStrip: BlockDefinition<{
     note: z.string().catch(""),
   }),
   render: ({ title, methods, note, appearance }) => (
-    <Section appearance={appearance} className="!py-8">
+    <Section appearance={appearance} className="py-8">
       <div className="flex flex-col items-center gap-4 text-center">
-        {title ? <p className="text-sm font-semibold">{title}</p> : null}
+        {title ? <p className="text-sm font-semibold text-site-text">{title}</p> : null}
         <div className="flex flex-wrap items-center justify-center gap-2.5">
           {methods.map((method, index) => {
             const glyph = PAYMENT_GLYPH[method.toLowerCase()] ?? "card";
             return (
               <span
                 key={index}
-                className="flex items-center gap-2 rounded-[var(--site-radius-sm)] border px-3 py-2 text-xs font-medium"
-                style={{ borderColor: "var(--site-border)", color: "var(--site-muted)" }}
+                className="flex items-center gap-2 rounded-site-sm border border-site-border px-3 py-2 text-xs font-medium text-site-muted"
               >
                 <Glyph name={glyph} size={14} />
                 {method}
@@ -697,11 +752,7 @@ export const paymentStrip: BlockDefinition<{
             );
           })}
         </div>
-        {note ? (
-          <p className="text-[11px]" style={{ color: "var(--site-muted)" }}>
-            {note}
-          </p>
-        ) : null}
+        {note ? <p className="text-[11px] text-site-muted">{note}</p> : null}
       </div>
     </Section>
   ),
@@ -745,7 +796,7 @@ export const trustStrip: BlockDefinition<{
       key: "text",
       label: "Regulated-market line",
       type: "text",
-      default: "Licensed and regulated. 18+. Play responsibly — set limits and take breaks.",
+      default: "Licensed and regulated. 18+. Play responsibly, set limits and take breaks.",
     },
   ],
   defaults: {
@@ -755,41 +806,48 @@ export const trustStrip: BlockDefinition<{
       { icon: "check", label: "Audited", detail: "Independent RNG tests" },
       { icon: "users", label: "Support", detail: "Live 24/7" },
     ],
-    text: "Licensed and regulated. 18+. Play responsibly — set limits and take breaks.",
+    text: "Licensed and regulated. 18+. Play responsibly, set limits and take breaks.",
   },
   schema: z.looseObject({
     items: z
-      .array(z.object({ icon: z.string().catch("shield"), label: z.string().catch(""), detail: z.string().catch("") }))
+      .array(
+        z.object({
+          icon: z.string().catch("shield"),
+          label: z.string().catch(""),
+          detail: z.string().catch(""),
+        }),
+      )
       .catch([]),
     text: z.string().catch(""),
   }),
   render: ({ items, text, appearance }) => (
-    <Section appearance={appearance} className="!py-8">
+    <Section appearance={appearance} className="py-8">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {items.map((item, index) => (
-          <div key={index} className="flex items-center gap-3 rounded-[var(--site-radius-sm)] border px-3.5 py-3" style={{ borderColor: "var(--site-border)" }}>
-            <span
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-full"
-              style={{ background: "color-mix(in srgb, var(--site-accent) 16%, transparent)", color: "var(--site-accent)" }}
-            >
+          <div
+            key={index}
+            className="flex items-center gap-3 rounded-site-sm border border-site-border px-3.5 py-3"
+          >
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-site-accent/15 text-site-accent">
               <Glyph name={item.icon} size={15} />
             </span>
             <div>
-              <p className="text-xs font-semibold">{item.label}</p>
-              <p className="text-[11px]" style={{ color: "var(--site-muted)" }}>
-                {item.detail}
-              </p>
+              <p className="text-xs font-semibold text-site-text">{item.label}</p>
+              <p className="text-[11px] text-site-muted">{item.detail}</p>
             </div>
           </div>
         ))}
       </div>
-      {text ? (
-        <p className="mt-4 text-center text-[11px]" style={{ color: "var(--site-muted)" }}>
-          {text}
-        </p>
-      ) : null}
+      {text ? <p className="mt-4 text-center text-[11px] text-site-muted">{text}</p> : null}
     </Section>
   ),
 };
 
-export const moneyBlocks = [bonusCard, bonusList, casinoCompareTable, pricingTable, paymentStrip, trustStrip];
+export const moneyBlocks = [
+  bonusCard,
+  bonusList,
+  casinoCompareTable,
+  pricingTable,
+  paymentStrip,
+  trustStrip,
+];

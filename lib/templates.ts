@@ -1,137 +1,340 @@
-import { and, asc, eq } from "drizzle-orm";
+import "server-only";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { templates, type Template } from "@/lib/db/schema";
 import {
-  collectTokens,
-  replaceTokens,
+  cloneDocumentWithNewIds,
+  DOCUMENT_SCHEMA_VERSION,
+  migrateDocument,
+  newBlockId,
   type PageDocument,
-  type PlaceholderSpec,
 } from "@/lib/documents";
-import { isAdminRank, type Actor } from "@/lib/auth/session";
+import { defaultPropsFor } from "@/lib/registry";
+import type { Actor } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
-import { createPage } from "@/lib/pages";
+import { getPage } from "@/lib/pages";
+import { NotFoundError } from "@/lib/errors";
 
-export async function listTemplates(options: { includeStaff?: boolean; userId?: string } = {}): Promise<Template[]> {
+export function builtInTemplates(): {
+  name: string;
+  description: string;
+  category: string;
+  document: PageDocument;
+}[] {
+  return [
+    {
+      name: "iGaming Welcome Offer Lander",
+      category: "Casino & Sportsbook",
+      description:
+        "High-converting single-offer landing page with hero, bonus card, payment trust strip, how-to-claim steps, FAQ, and responsible-gaming footer.",
+      document: {
+        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        root: { props: {} },
+        content: [
+          {
+            type: "promo-banner",
+            props: {
+              ...defaultPropsFor("promo-banner"),
+              id: newBlockId("promo-banner"),
+              badge: "NEW PLAYER EXCLUSIVE",
+              text: "200% Deposit Match up to $500 + 100 Free Spins on Book of Aurora",
+              code: "AURORA200",
+            },
+          },
+          {
+            type: "hero",
+            props: {
+              ...defaultPropsFor("hero"),
+              id: newBlockId("hero"),
+              eyebrow: "Licensed & Instant Payouts",
+              headline: "Double your first deposit and spin 100 times on the house",
+              subheadline:
+                "Verified payouts under 8 minutes via Visa, Apple Pay, Skrill, and instant bank transfer. Transparent 30x wagering with live progress tracking.",
+              primaryLabel: "Claim $500 + 100 Spins",
+              primaryHref: "#bonus",
+              secondaryLabel: "Read Full Terms",
+              secondaryHref: "#faq",
+              align: "center",
+              layout: "centered",
+            },
+          },
+          {
+            type: "trust-strip",
+            props: defaultPropsFor("trust-strip"),
+          },
+          {
+            type: "bonus-card",
+            props: {
+              ...defaultPropsFor("bonus-card"),
+              id: newBlockId("bonus-card"),
+            },
+          },
+          {
+            type: "payment-strip",
+            props: defaultPropsFor("payment-strip"),
+          },
+          {
+            type: "steps",
+            props: defaultPropsFor("steps"),
+          },
+          {
+            type: "game-grid",
+            props: defaultPropsFor("game-grid"),
+          },
+          {
+            type: "faq",
+            props: defaultPropsFor("faq"),
+          },
+          {
+            type: "responsible-gaming",
+            props: defaultPropsFor("responsible-gaming"),
+          },
+        ],
+      },
+    },
+    {
+      name: "Operator Comparison Toplist",
+      category: "Affiliate Review",
+      description:
+        "Ranked operator comparison table with license badges, bonus breakdown cards, editorial methodology, and compliance disclosure.",
+      document: {
+        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        root: { props: {} },
+        content: [
+          {
+            type: "hero",
+            props: {
+              ...defaultPropsFor("hero"),
+              id: newBlockId("hero"),
+              eyebrow: "Editorial Ranking - Updated Monthly",
+              headline: "Best Fast-Payout Online Casinos Ranked by Real Withdrawal Tests",
+              subheadline:
+                "Every listed operator holds an active gaming license and was secret-shopped with live deposits and cash-outs.",
+              primaryLabel: "Compare Top Operators",
+              primaryHref: "#compare",
+              secondaryLabel: "How We Score",
+              secondaryHref: "#methodology",
+              align: "left",
+              layout: "centered",
+            },
+          },
+          {
+            type: "casino-compare-table",
+            props: defaultPropsFor("casino-compare-table"),
+          },
+          {
+            type: "features-grid",
+            props: {
+              ...defaultPropsFor("features-grid"),
+              id: newBlockId("features-grid"),
+              eyebrow: "Methodology",
+              heading: "Four checks every listed brand must pass",
+              columns: "2",
+              items: [
+                {
+                  icon: "shield",
+                  title: "Active Regulator License",
+                  body: "We verify license numbers directly against MGA, UKGC, DGOJ, or AGCO public registers each month.",
+                },
+                {
+                  icon: "zap",
+                  title: "Timed Real-Money Cashout",
+                  body: "Reviewers deposit, wager, and withdraw with e-wallets and bank rails to record actual settlement times.",
+                },
+                {
+                  icon: "check",
+                  title: "Plain-English Bonus Audit",
+                  body: "Wagering multipliers, max-bet caps, and game weightings are surfaced beside every headline figure.",
+                },
+                {
+                  icon: "clock",
+                  title: "24/7 Live Support Test",
+                  body: "Support queues are tested at peak weekend hours for safer-gambling and KYC responsiveness.",
+                },
+              ],
+            },
+          },
+          {
+            type: "faq",
+            props: defaultPropsFor("faq"),
+          },
+          {
+            type: "responsible-gaming",
+            props: defaultPropsFor("responsible-gaming"),
+          },
+        ],
+      },
+    },
+    {
+      name: "SaaS Product Launch & Pricing",
+      category: "Product & Campaign",
+      description:
+        "Clean product marketing page with split hero, three-column value props, monthly/annual pricing toggle, customer quote, and closing CTA.",
+      document: {
+        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        root: { props: {} },
+        content: [
+          {
+            type: "hero",
+            props: {
+              ...defaultPropsFor("hero"),
+              id: newBlockId("hero"),
+              eyebrow: "Campaign Launch Kit",
+              headline: "Ship localized promo pages in minutes without touching code",
+              subheadline:
+                "Structured blocks, instant version rollback, and custom domain SSL built for high-velocity marketing teams.",
+              primaryLabel: "Start Building",
+              primaryHref: "#pricing",
+              secondaryLabel: "See Features",
+              secondaryHref: "#features",
+              align: "center",
+              layout: "centered",
+            },
+          },
+          {
+            type: "features-grid",
+            props: defaultPropsFor("features-grid"),
+          },
+          {
+            type: "pricing-table",
+            props: defaultPropsFor("pricing-table"),
+          },
+          {
+            type: "testimonial-quote",
+            props: defaultPropsFor("testimonial-quote"),
+          },
+          {
+            type: "cta-banner",
+            props: defaultPropsFor("cta-banner"),
+          },
+        ],
+      },
+    },
+  ];
+}
+
+export async function listTemplates(siteId?: string): Promise<Template[]> {
   await ensureDb();
-  const rows = await db
+  if (!siteId) {
+    return db.select().from(templates).orderBy(asc(templates.category), asc(templates.name));
+  }
+  return db
     .select()
     .from(templates)
-    .where(eq(templates.status, "active"))
-    .orderBy(asc(templates.name));
-  return rows.filter(
-    (template) =>
-      template.scope === "platform" ||
-      (options.includeStaff && template.scope === "staff" && (!options.userId || template.createdBy === options.userId)),
-  );
+    .where(or(isNull(templates.siteId), eq(templates.siteId, siteId)))
+    .orderBy(asc(templates.category), asc(templates.name));
 }
 
-export async function getTemplate(id: string): Promise<Template | null> {
+export async function getTemplate(templateId: string): Promise<Template | null> {
   await ensureDb();
-  const [row] = await db.select().from(templates).where(eq(templates.id, id)).limit(1);
-  return row ?? null;
+  const [tpl] = await db.select().from(templates).where(eq(templates.id, templateId)).limit(1);
+  return tpl ?? null;
 }
 
-export function placeholdersFor(template: Template): PlaceholderSpec[] {
-  const declared = new Map(template.placeholders.map((placeholder) => [placeholder.key, placeholder]));
-  const tokens = collectTokens(template.document);
-  const out: PlaceholderSpec[] = [];
-  for (const token of tokens) {
-    out.push(
-      declared.get(token) ?? { key: token, label: token.replace(/[_.-]/g, " "), kind: "text", defaultValue: "" },
-    );
+export function extractTemplatePlaceholders(
+  doc: PageDocument,
+): { key: string; label: string; defaultValue: string }[] {
+  const raw = JSON.stringify(doc);
+  const found = new Set<string>();
+  const regex = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+  let match: RegExpExecArray | null = regex.exec(raw);
+  while (match) {
+    found.add(match[1]);
+    match = regex.exec(raw);
   }
-  return out;
+  return [...found].map((key) => ({
+    key,
+    label: key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    defaultValue: "",
+  }));
 }
 
-export type ApplyTemplateResult = { pageId: string; slug: string };
+export function applyTemplatePlaceholders(
+  doc: PageDocument,
+  values: Record<string, string>,
+): PageDocument {
+  if (Object.keys(values).length === 0) return doc;
+  const replaceInValue = (node: unknown): unknown => {
+    if (typeof node === "string") {
+      return node.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (full, key: string) =>
+        values[key] !== undefined && values[key].trim() !== "" ? values[key] : full,
+      );
+    }
+    if (Array.isArray(node)) return node.map(replaceInValue);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(
+        Object.entries(node as Record<string, unknown>).map(([k, v]) => [k, replaceInValue(v)]),
+      );
+    }
+    return node;
+  };
+  return replaceInValue(doc) as PageDocument;
+}
 
-export async function applyTemplate(options: {
-  siteId: string;
-  templateId: string;
-  values: Record<string, string>;
-  title: string;
-  slug: string;
-  actor: Actor;
-}): Promise<ApplyTemplateResult> {
+export async function instantiateTemplate(templateId: string): Promise<PageDocument> {
   await ensureDb();
-  const template = await getTemplate(options.templateId);
-  if (!template || template.status !== "active") throw new Error("That template is not available.");
-  if (template.scope === "staff" && template.createdBy !== options.actor.user.id) {
-    throw new Error("That template belongs to another staff member.");
-  }
-
-  const tokens: Record<string, string> = {};
-  for (const placeholder of placeholdersFor(template)) {
-    tokens[placeholder.key] = options.values[placeholder.key] ?? placeholder.defaultValue ?? "";
-  }
-  const document = replaceTokens(template.document, tokens) as PageDocument;
-
-  const page = await createPage({
-    siteId: options.siteId,
-    title: options.title || template.name,
-    slug: options.slug || template.name,
-    document,
-    actor: options.actor,
-    source: "template",
-    seo: { description: template.description || undefined, canonicalMode: "self", noindex: false },
-  });
-
-  await recordAudit({
-    action: "template_applied",
-    summary: `Created “${page.title}” from the template “${template.name}”`,
-    siteId: options.siteId,
-    actor: options.actor,
-    targetType: "page",
-    targetId: page.id,
-    detail: { templateId: template.id, placeholders: Object.keys(tokens) },
-  });
-
-  return { pageId: page.id, slug: page.slug };
+  const [tpl] = await db.select().from(templates).where(eq(templates.id, templateId)).limit(1);
+  if (!tpl) throw new NotFoundError("Template not found.");
+  return cloneDocumentWithNewIds(migrateDocument(tpl.document));
 }
 
 export async function savePageAsTemplate(options: {
   siteId: string;
-  document: PageDocument;
+  pageId: string;
   name: string;
   description: string;
+  category: string;
+  sharedAcrossSites: boolean;
   actor: Actor;
 }): Promise<Template> {
   await ensureDb();
-  const tokens = [...collectTokens(options.document)].map<PlaceholderSpec>((token) => ({
-    key: token,
-    label: token.replace(/[_.-]/g, " "),
-    kind: "text",
-    defaultValue: "",
-  }));
-  const [template] = await db
+  const page = await getPage(options.siteId, options.pageId);
+  if (!page) throw new NotFoundError("Page not found.");
+
+  const [tpl] = await db
     .insert(templates)
     .values({
-      scope: "staff",
-      name: options.name,
-      description: options.description,
-      document: options.document,
-      placeholders: tokens,
-      status: "active",
+      siteId: options.sharedAcrossSites ? null : options.siteId,
+      name: options.name.trim(),
+      description: options.description.trim(),
+      category: options.category.trim() || "Saved",
+      document: cloneDocumentWithNewIds(migrateDocument(page.draftDocument)),
       createdBy: options.actor.user.id,
     })
     .returning();
+
   await recordAudit({
     action: "template_created",
-    summary: `Saved “${template.name}” as a staff template`,
+    summary: `Saved "${tpl.name}" as a reusable template`,
     siteId: options.siteId,
     actor: options.actor,
     targetType: "template",
-    targetId: template.id,
+    targetId: tpl.id,
   });
-  return template;
+
+  return tpl;
 }
 
-export async function retireTemplate(id: string, actor: Actor): Promise<void> {
+export async function deleteTemplate(
+  siteId: string,
+  templateId: string,
+  actor: Actor,
+): Promise<void> {
   await ensureDb();
-  const template = await getTemplate(id);
-  if (!template) throw new Error("Template not found.");
-  if (template.scope === "staff" && template.createdBy !== actor.user.id && !isAdminRank(actor)) {
-    throw new Error("Only the author or an admin can retire a staff template.");
-  }
-  await db.update(templates).set({ status: "retired", updatedAt: new Date() }).where(and(eq(templates.id, id)));
+  await db
+    .delete(templates)
+    .where(
+      and(
+        eq(templates.id, templateId),
+        or(eq(templates.siteId, siteId), isNull(templates.siteId)),
+      ),
+    );
+  await recordAudit({
+    action: "template_deleted",
+    summary: "Deleted template",
+    siteId,
+    actor,
+    targetType: "template",
+    targetId: templateId,
+  });
 }

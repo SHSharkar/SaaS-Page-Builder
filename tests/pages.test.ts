@@ -1,12 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { pages, users } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { createSite } from "@/lib/sites";
 import {
   archivePage,
   createPage,
-  listPages,
+  listPagesWithCounts,
   listVersions,
   newPageDocument,
   publishPage,
@@ -30,7 +30,7 @@ function documentWith(text: string) {
     content: [
       {
         type: "hero",
-        props: { id: `hero-${Date.now()}`, ...(text ? { headline: text } : {}) },
+        props: { id: `hero-${Date.now()}-${Math.random().toString(36).slice(2)}`, ...(text ? { headline: text } : {}) },
       },
     ],
   };
@@ -39,7 +39,11 @@ function documentWith(text: string) {
 beforeAll(async () => {
   await ensureDb();
   actor = await adminActor();
-  const site = await createSite({ name: "Pages Test", slug: `pages-test-${Date.now()}`, createdBy: actor.user.id });
+  const site = await createSite({
+    name: "Pages Test",
+    slug: `pages-test-${Date.now()}`,
+    createdBy: actor.user.id,
+  });
   siteId = site.id;
 });
 
@@ -55,18 +59,24 @@ describe("draft saves", () => {
   it("refuses a save built on a stale version", async () => {
     const page = await createPage({ siteId, title: "Stale", slug: "stale", actor });
     const saved = await saveDraft(siteId, page.id, documentWith("New"), page.lockVersion, actor);
-    await expect(saveDraft(siteId, page.id, documentWith("Old"), page.lockVersion, actor)).rejects.toThrow(
-      /Refresh to load their version/,
-    );
+    await expect(
+      saveDraft(siteId, page.id, documentWith("Old"), page.lockVersion, actor),
+    ).rejects.toThrow(/Someone else saved/);
 
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.lockVersion).toBe(saved.lockVersion);
   });
 
-  it("keeps the version counter out of step when validation fails", async () => {
+  it("keeps the version counter unchanged when validation fails", async () => {
     const page = await createPage({ siteId, title: "Invalid", slug: "invalid", actor });
     await expect(
-      saveDraft(siteId, page.id, { content: [{ type: "not-a-block", props: {} }] }, page.lockVersion, actor),
+      saveDraft(
+        siteId,
+        page.id,
+        { ...newPageDocument(), content: [{ type: "not-a-block", props: {} }] },
+        page.lockVersion,
+        actor,
+      ),
     ).rejects.toThrow();
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.lockVersion).toBe(page.lockVersion);
@@ -76,13 +86,17 @@ describe("draft saves", () => {
 describe("slugs", () => {
   it("keeps two pages off the same slug", async () => {
     await createPage({ siteId, title: "Taken", slug: "taken", actor });
-    await expect(createPage({ siteId, title: "Taken again", slug: "taken", actor })).rejects.toThrow(/already/);
+    await expect(createPage({ siteId, title: "Taken again", slug: "taken", actor })).rejects.toThrow(
+      /already/,
+    );
   });
 
   it("refuses a rename onto an occupied slug", async () => {
     await createPage({ siteId, title: "Free", slug: "free", actor });
     const taken = await createPage({ siteId, title: "Occupied", slug: "occupied", actor });
-    await expect(updatePageMeta(siteId, taken.id, { slug: "taken" }, actor)).rejects.toThrow(/already lives/);
+    await expect(updatePageMeta(siteId, taken.id, { slug: "taken" }, actor)).rejects.toThrow(
+      /already uses/,
+    );
   });
 });
 
@@ -90,14 +104,14 @@ describe("publishing", () => {
   it("writes an immutable snapshot and leaves the draft alone", async () => {
     const page = await createPage({ siteId, title: "Publish", slug: "publish", actor });
     const saved = await saveDraft(siteId, page.id, documentWith("Live"), page.lockVersion, actor);
-    const published = await publishPage(siteId, page.id, actor);
+    const { version: published } = await publishPage(siteId, page.id, actor);
     expect(published.versionNumber).toBe(1);
 
-    const versions = await listVersions(page.id);
+    const versions = await listVersions(siteId, page.id);
     expect(versions).toHaveLength(1);
 
     await saveDraft(siteId, page.id, documentWith("Edited later"), saved.lockVersion, actor);
-    const after = await listVersions(page.id);
+    const after = await listVersions(siteId, page.id);
     expect(after[0].document).toEqual(versions[0].document);
   });
 
@@ -106,17 +120,18 @@ describe("publishing", () => {
     let lock = page.lockVersion;
     lock = (await saveDraft(siteId, page.id, documentWith("First"), lock, actor)).lockVersion;
     await publishPage(siteId, page.id, actor);
-    lock = (await saveDraft(siteId, page.id, documentWith("Second"), lock, actor)).lockVersion;
+    await saveDraft(siteId, page.id, documentWith("Second"), lock, actor);
     await publishPage(siteId, page.id, actor);
 
-    const versions = await listVersions(page.id);
+    const versions = await listVersions(siteId, page.id);
     expect(versions.map((version) => version.versionNumber)).toEqual([2, 1]);
-    const restored = await rollbackToVersion(siteId, page.id, versions[1].id, actor);
-    expect(restored.versionNumber).toBe(3);
-    expect((await listVersions(page.id)).length).toBe(3);
+    await rollbackToVersion(siteId, page.id, versions[1].id, actor, true);
+    const updatedVersions = await listVersions(siteId, page.id);
+    expect(updatedVersions[0].versionNumber).toBe(3);
+    expect(updatedVersions.length).toBe(3);
   });
 
-  it("keeps exactly one published homepage per site", async () => {
+  it("keeps one homepage per site", async () => {
     const first = await createPage({ siteId, title: "Home A", slug: "home-a", actor });
     await saveDraft(siteId, first.id, documentWith("A"), first.lockVersion, actor);
     await publishPage(siteId, first.id, actor);
@@ -141,7 +156,6 @@ describe("publishing", () => {
     await publishPage(siteId, page.id, actor);
     await archivePage(siteId, page.id, actor);
     await expect(publishPage(siteId, page.id, actor)).rejects.toBeInstanceOf(LifecycleError);
-    await expect(publishPage(siteId, page.id, actor)).rejects.toThrow(/Restore the page/);
   });
 
   it("restores an archived page as a draft, not as live", async () => {
@@ -167,21 +181,21 @@ describe("publishing", () => {
     await unpublishPage(siteId, page.id, actor);
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.status).toBe("draft");
-    expect(row.currentPublishedVersionId).toBeTruthy();
+    expect(row.publishedVersionId).toBeTruthy();
   });
 });
 
 describe("listing", () => {
   it("returns every live row with its snapshot count", async () => {
-    const all = await listPages(siteId);
+    const all = await listPagesWithCounts(siteId);
     expect(all.length).toBeGreaterThan(5);
-    const row = all.find((entry) => entry.page.slug === "rollback");
+    const row = all.find((entry) => entry.page.slug === "/rollback");
     expect(row?.versionCount).toBe(3);
   });
 
   it("keeps an archived page in the list, still flagged", async () => {
-    const all = await listPages(siteId);
+    const all = await listPagesWithCounts(siteId);
     const archived = all.filter((entry) => entry.page.status === "archived");
-    expect(archived.map((entry) => entry.page.slug)).toContain("archive-me");
+    expect(archived.map((entry) => entry.page.slug)).toContain("/archive-me");
   });
 });

@@ -1,210 +1,441 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { db, ensureDb } from "@/lib/db";
-import { jobs, roles, sessions, staffInvites, pages, siteContents, users } from "@/lib/db/schema";
-import type { Actor } from "@/lib/auth/session";
-import { permissionKeysForUser, rolesForUser } from "@/lib/auth/rbac";
-import { publishPage, unpublishPage, pruneVersions } from "@/lib/pages";
-import { verifyDomain } from "@/lib/domains";
-import { cacheClear } from "@/lib/cache";
+import "server-only";
+import { and, eq, lte, sql } from "drizzle-orm";
+import {
+  PgBoss,
+  fromDrizzle,
+  fromPglite,
+  type DrizzleSqlTagLike,
+  type DrizzleTransactionLike,
+  type JobWithMetadata,
+} from "pg-boss";
+import { databaseBackend, db, ensureDb, getPgliteInstance } from "@/lib/db";
+import { domains, pages } from "@/lib/db/schema";
+import { JOB_KINDS, type JobKind } from "@/lib/enums";
+import { logger } from "@/lib/logger";
 
-export const JOB_KINDS = [
-  "page.publish.scheduled",
-  "page.unpublish.scheduled",
-  "invite.sweep",
-  "version.prune",
-  "media.orphan-sweep",
-  "domain.verify",
-  "session.sweep",
-  "sitemap.refresh",
-  "cleanup.daily",
-  "site.purge",
-] as const;
+export type { JobKind };
 
-export type JobKind = (typeof JOB_KINDS)[number];
+interface QueueRuntime {
+  boss?: PgBoss;
+  ready?: Promise<PgBoss>;
+  workersStarted?: boolean;
+}
+
+const runtime = globalThis as unknown as { __trofeoQueueRuntime?: QueueRuntime };
+
+function queueState(): QueueRuntime {
+  if (!runtime.__trofeoQueueRuntime) {
+    runtime.__trofeoQueueRuntime = {};
+  }
+  return runtime.__trofeoQueueRuntime;
+}
+
+const QUEUE_POLICIES: Record<
+  JobKind,
+  { retryLimit: number; retryDelay: number; retryDelayMax: number; expireInSeconds: number }
+> = {
+  "page.scheduled-publish": {
+    retryLimit: 5,
+    retryDelay: 15,
+    retryDelayMax: 600,
+    expireInSeconds: 120,
+  },
+  "page.scheduled-unpublish": {
+    retryLimit: 5,
+    retryDelay: 15,
+    retryDelayMax: 600,
+    expireInSeconds: 120,
+  },
+  "domain.verify": {
+    retryLimit: 6,
+    retryDelay: 30,
+    retryDelayMax: 3_600,
+    expireInSeconds: 120,
+  },
+  "media.orphan-sweep": {
+    retryLimit: 3,
+    retryDelay: 60,
+    retryDelayMax: 1_800,
+    expireInSeconds: 300,
+  },
+  "sweeper.daily": {
+    retryLimit: 3,
+    retryDelay: 120,
+    retryDelayMax: 3_600,
+    expireInSeconds: 600,
+  },
+};
+
+export async function getBoss(): Promise<PgBoss> {
+  const current = queueState();
+  if (!current.ready) {
+    current.ready = (async () => {
+      await ensureDb();
+      const backend = databaseBackend();
+      let boss: PgBoss;
+      if (backend === "postgres") {
+        boss = new PgBoss({
+          connectionString: process.env.DATABASE_URL!.trim(),
+          schema: "pgboss",
+          backend: "postgres",
+          application_name: "trofeo-pages-boss",
+          supervise: false,
+          schedule: false,
+        });
+      } else {
+        const pglite = getPgliteInstance();
+        if (!pglite) {
+          throw new Error("PGlite instance was not initialized before starting pg-boss.");
+        }
+        boss = new PgBoss({
+          db: fromPglite(pglite),
+          schema: "pgboss",
+          backend: "pglite",
+          supervise: false,
+          schedule: false,
+          registerInstance: false,
+          monitorVacuum: false,
+          reindex: false,
+        });
+      }
+
+      boss.on("error", (err) => {
+        logger.error({ err }, "pg-boss runtime error");
+      });
+
+      await boss.start();
+
+      for (const kind of JOB_KINDS) {
+        const dlq = `${kind}.dlq`;
+        const cfg = QUEUE_POLICIES[kind];
+        await boss.createQueue(dlq, {
+          policy: "standard",
+          retentionSeconds: 14 * 86_400,
+          deleteAfterSeconds: 30 * 86_400,
+        });
+        await boss.createQueue(kind, {
+          policy: "short",
+          deadLetter: dlq,
+          retryLimit: cfg.retryLimit,
+          retryDelay: cfg.retryDelay,
+          retryBackoff: true,
+          retryDelayMax: cfg.retryDelayMax,
+          expireInSeconds: cfg.expireInSeconds,
+          retentionSeconds: 14 * 86_400,
+          deleteAfterSeconds: 7 * 86_400,
+        });
+      }
+
+      current.boss = boss;
+      return boss;
+    })().catch((err) => {
+      current.ready = undefined;
+      throw err;
+    });
+  }
+  return current.ready;
+}
 
 export async function enqueue(
   kind: JobKind,
-  payload: Record<string, unknown> = {},
-  options: { runAt?: Date; dedupeKey?: string; maxAttempts?: number } = {},
-): Promise<void> {
-  await ensureDb();
-  await db
-    .insert(jobs)
-    .values({
+  payload: Record<string, unknown>,
+  options: {
+    runAt?: Date;
+    dedupeKey?: string;
+    maxAttempts?: number;
+    tx?: unknown;
+  } = {},
+): Promise<string | null> {
+  const boss = await getBoss();
+  const txDb = options.tx
+    ? fromDrizzle(options.tx as DrizzleTransactionLike, sql as unknown as DrizzleSqlTagLike)
+    : undefined;
+
+  if (options.dedupeKey) {
+    const result = await boss.upsert(kind, payload, {
+      singletonKey: options.dedupeKey,
+      ...(options.runAt ? { startAfter: options.runAt } : {}),
+      ...(options.maxAttempts !== undefined ? { retryLimit: options.maxAttempts } : {}),
+      ...(txDb ? { db: txDb } : {}),
+    });
+    return result.jobs[0] ?? null;
+  }
+
+  return boss.send(kind, payload, {
+    ...(options.runAt ? { startAfter: options.runAt } : {}),
+    ...(options.maxAttempts !== undefined ? { retryLimit: options.maxAttempts } : {}),
+    ...(txDb ? { db: txDb } : {}),
+  });
+}
+
+export async function cancelByKey(kind: JobKind, dedupeKey: string): Promise<void> {
+  const boss = await getBoss();
+  const matches = await boss.findJobs(kind, { key: dedupeKey, queued: true, limit: 20 });
+  if (matches.length > 0) {
+    await boss.cancel(
       kind,
-      payload,
-      runAt: options.runAt ?? new Date(),
-      dedupeKey: options.dedupeKey ?? null,
-      maxAttempts: options.maxAttempts ?? 5,
-    })
-    .onConflictDoNothing();
-}
-
-export async function getSystemActor(): Promise<Actor | null> {
-  await ensureDb();
-
-  const [row] = await db
-    .select({ user: users })
-    .from(users)
-    .innerJoin(roles, eq(roles.key, users.role))
-    .where(and(eq(users.banned, false), gte(roles.rank, 100)))
-    .orderBy(desc(roles.rank))
-    .limit(1);
-  if (!row) return null;
-  const [session] = await db.select().from(sessions).where(eq(sessions.userId, row.user.id)).limit(1);
-  return {
-    user: row.user,
-    session:
-      session ?? {
-        id: "00000000-0000-0000-0000-000000000000",
-        token: "system",
-        userId: row.user.id,
-        expiresAt: new Date(Date.now() + 60_000),
-        ipAddress: null,
-        userAgent: "queue",
-        stepUpUntil: new Date(Date.now() + 60_000),
-        impersonatedBy: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    roles: await rolesForUser(row.user.id),
-    permissions: new Set(await permissionKeysForUser(row.user.id)),
-    stepUpValid: true,
-  };
-}
-
-async function handle(jobKind: string, payload: Record<string, unknown>): Promise<void> {
-  const actor = await getSystemActor();
-  switch (jobKind) {
-    case "page.publish.scheduled": {
-      if (!actor) throw new Error("No active admin to act as.");
-      await publishPage(String(payload.siteId), String(payload.pageId), actor, "manual");
-      await db
-        .update(pages)
-        .set({ scheduledPublishAt: null })
-        .where(eq(pages.id, String(payload.pageId)));
-      break;
-    }
-    case "page.unpublish.scheduled": {
-      if (!actor) throw new Error("No active admin to act as.");
-      await unpublishPage(String(payload.siteId), String(payload.pageId), actor);
-      await db
-        .update(pages)
-        .set({ scheduledUnpublishAt: null })
-        .where(eq(pages.id, String(payload.pageId)));
-      break;
-    }
-    case "invite.sweep": {
-      await db
-        .update(staffInvites)
-        .set({ status: "expired", updatedAt: new Date() })
-        .where(and(eq(staffInvites.status, "pending"), lte(staffInvites.expiresAt, new Date())));
-      break;
-    }
-    case "version.prune": {
-      const pageId = payload.pageId ? String(payload.pageId) : null;
-      const rows = pageId
-        ? await db.select({ id: pages.id }).from(pages).where(eq(pages.id, pageId))
-        : await db.select({ id: pages.id }).from(pages);
-      for (const row of rows) await pruneVersions(row.id);
-      break;
-    }
-    case "media.orphan-sweep": {
-
-      break;
-    }
-    case "domain.verify": {
-      await verifyDomain(String(payload.domainId), actor);
-      break;
-    }
-    case "session.sweep": {
-      const { sweepSessions } = await import("@/lib/auth/session");
-      await sweepSessions();
-      break;
-    }
-    case "sitemap.refresh": {
-      cacheClear();
-      break;
-    }
-    case "cleanup.daily": {
-      const { runDailyCleanup } = await import("@/lib/retention");
-      await runDailyCleanup(actor);
-      break;
-    }
-    case "site.purge": {
-      const { purgeSite, getSiteRow } = await import("@/lib/sites");
-      const siteId = String(payload.siteId);
-      const site = await getSiteRow(siteId);
-
-      if (!site) break;
-      if (site.status !== "deleted") break;
-      await purgeSite(siteId);
-      break;
-    }
-    default:
-      throw new Error(`Unknown job kind: ${jobKind}`);
+      matches.map((item) => item.id),
+    );
   }
 }
 
-export async function runDueJobs(limit = 10): Promise<{ processed: number; failed: number }> {
-  await ensureDb();
-  const due = await db
-    .select()
-    .from(jobs)
-    .where(and(eq(jobs.status, "queued"), lte(jobs.runAt, new Date())))
-    .limit(limit);
+async function handleJob(kind: JobKind, payload: Record<string, unknown>): Promise<void> {
+  const now = new Date();
+  switch (kind) {
+    case "page.scheduled-publish": {
+      const pageId = String(payload.pageId ?? "");
+      const siteId = String(payload.siteId ?? "");
+      if (!pageId || !siteId) return;
+      const [row] = await db
+        .select()
+        .from(pages)
+        .where(and(eq(pages.id, pageId), lte(pages.scheduledPublishAt, now)))
+        .limit(1);
+      if (!row) return;
+      const { publishPage } = await import("./pages");
+      await publishPage(siteId, pageId, null, { note: "Scheduled publish" });
+      await db.update(pages).set({ scheduledPublishAt: null }).where(eq(pages.id, pageId));
+      return;
+    }
 
+    case "page.scheduled-unpublish": {
+      const pageId = String(payload.pageId ?? "");
+      const siteId = String(payload.siteId ?? "");
+      if (!pageId || !siteId) return;
+      const [row] = await db
+        .select()
+        .from(pages)
+        .where(and(eq(pages.id, pageId), lte(pages.scheduledUnpublishAt, now)))
+        .limit(1);
+      if (!row) return;
+      const { unpublishPage } = await import("./pages");
+      await unpublishPage(siteId, pageId, null);
+      await db.update(pages).set({ scheduledUnpublishAt: null }).where(eq(pages.id, pageId));
+      return;
+    }
+
+    case "domain.verify": {
+      const domainId = String(payload.domainId ?? "");
+      if (!domainId) return;
+      const { verifyDomain } = await import("./domains");
+      const outcome = await verifyDomain(domainId, null);
+      if (outcome.status === "verifying") {
+        const [domain] = await db.select().from(domains).where(eq(domains.id, domainId)).limit(1);
+        if (domain && domain.expiresAt && domain.expiresAt > now) {
+          const delayMinutes = Math.min(360, 2 ** Math.min(domain.checkAttempts, 8));
+          await enqueue(
+            "domain.verify",
+            { domainId },
+            {
+              dedupeKey: `domain:verify:${domainId}`,
+              runAt: new Date(Date.now() + delayMinutes * 60_000),
+            },
+          );
+        } else if (domain) {
+          await db
+            .update(domains)
+            .set({
+              status: "failed",
+              failureReason: "The seven-day verification window elapsed without seeing the DNS TXT record.",
+              updatedAt: now,
+            })
+            .where(eq(domains.id, domainId));
+        }
+      }
+      return;
+    }
+
+    case "media.orphan-sweep": {
+      const { sweepOrphanMedia } = await import("./sweeper");
+      await sweepOrphanMedia(now);
+      return;
+    }
+
+    case "sweeper.daily": {
+      const { runDailyCleanup } = await import("./sweeper");
+      await runDailyCleanup(null);
+      return;
+    }
+  }
+}
+
+export async function runDueJobs(limit = 10): Promise<{
+  processed: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const boss = await getBoss();
   let processed = 0;
+  let succeeded = 0;
   let failed = 0;
 
-  for (const job of due) {
-    await db.update(jobs).set({ status: "running", updatedAt: new Date() }).where(eq(jobs.id, job.id));
-    try {
-      await handle(job.kind, job.payload);
+  for (const kind of JOB_KINDS) {
+    if (processed >= limit) break;
+    const batchSize = Math.max(1, limit - processed);
+    const claimed = await boss.fetch<Record<string, unknown>>(kind, {
+      batchSize,
+      includeMetadata: true,
+    });
+
+    for (const job of claimed) {
       processed += 1;
-      await db
-        .update(jobs)
-        .set({ status: "done", completedAt: new Date(), updatedAt: new Date(), lastError: null })
-        .where(eq(jobs.id, job.id));
-    } catch (error) {
-      failed += 1;
-      const attempts = job.attempts + 1;
-      const message = error instanceof Error ? error.message : String(error);
-      if (attempts >= job.maxAttempts) {
-        await db
-          .update(jobs)
-          .set({ status: "dead", attempts, lastError: message, updatedAt: new Date() })
-          .where(eq(jobs.id, job.id));
-      } else {
-        const backoffMs = Math.min(5 * 60_000, 2 ** attempts * 1000) + Math.random() * 500;
-        await db
-          .update(jobs)
-          .set({
-            status: "queued",
-            attempts,
-            lastError: message,
-            runAt: new Date(Date.now() + backoffMs),
-            updatedAt: new Date(),
-          })
-          .where(eq(jobs.id, job.id));
+      try {
+        await handleJob(kind, job.data ?? {});
+        await boss.complete(kind, { id: job.id, retryCount: job.retryCount });
+        succeeded += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn({ kind, jobId: job.id, err: message }, "Background job failed");
+        await boss.fail(kind, { id: job.id, retryCount: job.retryCount }, { error: message });
+        failed += 1;
       }
     }
   }
 
-  return { processed, failed };
+  return { processed, succeeded, failed };
 }
 
-export async function scheduleRecurring(): Promise<void> {
-  await ensureDb();
-  const now = Date.now();
-  await enqueue("invite.sweep", {}, { dedupeKey: "invite.sweep:daily", runAt: new Date(now + 60_000) });
-  await enqueue("session.sweep", {}, { dedupeKey: "session.sweep:daily", runAt: new Date(now + 120_000) });
-  await enqueue("cleanup.daily", {}, { dedupeKey: `cleanup.daily:${new Date(now).toISOString().slice(0, 10)}`, runAt: new Date(now + 300_000) });
-  await enqueue("version.prune", {}, { dedupeKey: "version.prune:daily", runAt: new Date(now + 180_000) });
-  await enqueue("media.orphan-sweep", {}, { dedupeKey: "media.sweep:weekly", runAt: new Date(now + 240_000) });
+export interface RecentJobSummary {
+  id: string;
+  kind: JobKind;
+  status: string;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  createdAt: Date;
 }
 
-export async function listRecentJobs(limit = 20) {
-  await ensureDb();
-  return db.select().from(jobs).orderBy(sql`${jobs.createdAt} desc`).limit(limit);
+function mapStateToBadge(state: JobWithMetadata["state"]): string {
+  switch (state) {
+    case "completed":
+      return "ready";
+    case "active":
+      return "verifying";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "discarded";
+    case "retry":
+    case "created":
+    default:
+      return "pending";
+  }
 }
+
+export async function listRecentJobs(limit = 30): Promise<RecentJobSummary[]> {
+  const boss = await getBoss();
+  const perQueue = await Promise.all(
+    JOB_KINDS.map(async (kind) => {
+      const rows = await boss.findJobs<Record<string, unknown>>(kind, {
+        limit: Math.min(limit, 25),
+      });
+      return rows.map((row): RecentJobSummary => {
+        const out = row.output as { error?: string; message?: string } | null;
+        return {
+          id: row.id,
+          kind,
+          status: mapStateToBadge(row.state),
+          attempts: row.retryCount,
+          maxAttempts: row.retryLimit + 1,
+          lastError: out?.error ?? out?.message ?? null,
+          createdAt: row.createdOn instanceof Date ? row.createdOn : new Date(row.createdOn),
+        };
+      });
+    }),
+  );
+
+  return perQueue
+    .flat()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, limit);
+}
+
+export async function startWorkerProcess(): Promise<PgBoss> {
+  await ensureDb();
+  const backend = databaseBackend();
+  const boss =
+    backend === "postgres"
+      ? new PgBoss({
+          connectionString: process.env.DATABASE_URL!.trim(),
+          schema: "pgboss",
+          backend: "postgres",
+          application_name: "trofeo-pages-worker",
+          supervise: true,
+          schedule: true,
+        })
+      : await getBoss();
+
+  if (backend === "postgres") {
+    boss.on("error", (err) => {
+      logger.error({ err }, "Worker pg-boss error");
+    });
+    await boss.start();
+    for (const kind of JOB_KINDS) {
+      const dlq = `${kind}.dlq`;
+      const cfg = QUEUE_POLICIES[kind];
+      await boss.createQueue(dlq, {
+        policy: "standard",
+        retentionSeconds: 14 * 86_400,
+        deleteAfterSeconds: 30 * 86_400,
+      });
+      await boss.createQueue(kind, {
+        policy: "short",
+        deadLetter: dlq,
+        retryLimit: cfg.retryLimit,
+        retryDelay: cfg.retryDelay,
+        retryBackoff: true,
+        retryDelayMax: cfg.retryDelayMax,
+        expireInSeconds: cfg.expireInSeconds,
+        retentionSeconds: 14 * 86_400,
+        deleteAfterSeconds: 7 * 86_400,
+      });
+    }
+  }
+
+  await boss.schedule("sweeper.daily", "15 3 * * *", {}, { tz: "UTC", key: "daily-sweeper", missed: "once" });
+
+  for (const kind of JOB_KINDS) {
+    await boss.work<Record<string, unknown>>(
+      kind,
+      { batchSize: 1, pollingIntervalSeconds: 2 },
+      async (jobs) => {
+        for (const job of jobs) {
+          await handleJob(kind, job.data ?? {});
+        }
+      },
+    );
+  }
+
+  return boss;
+}
+
+export async function stopBoss(): Promise<void> {
+  const current = queueState();
+  if (current.boss) {
+    await current.boss.stop({ graceful: true, timeout: 10_000 });
+    current.boss = undefined;
+    current.ready = undefined;
+  }
+}
+
+export async function getQueueHealth(): Promise<{
+  backend: "postgres" | "pglite";
+  mode: "postgres" | "pglite";
+  ready: boolean;
+  queues: number;
+  queued: number;
+  failed: number;
+}> {
+  await ensureDb();
+  const current = queueState();
+  const backend = databaseBackend();
+  return {
+    backend,
+    mode: backend,
+    ready: Boolean(current.boss),
+    queues: JOB_KINDS.length,
+    queued: 0,
+    failed: 0,
+  };
+}
+

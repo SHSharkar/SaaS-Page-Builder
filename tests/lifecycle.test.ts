@@ -4,7 +4,7 @@ import { LifecycleError } from "@/lib/errors";
 import { assertTransition } from "@/lib/lifecycle";
 
 describe("page state machine", () => {
-  it("allows draft → published → draft", () => {
+  it("allows draft -> published -> draft", () => {
     expect(canTransition("page", "draft", "published")).toBe(true);
     expect(canTransition("page", "published", "draft")).toBe(true);
   });
@@ -60,7 +60,7 @@ describe("domain state machine", () => {
 });
 
 describe("import state machine", () => {
-  it("walks uploaded → parsing → mapped → in_review → applied", () => {
+  it("walks uploaded -> parsing -> mapped -> in_review -> applied", () => {
     const path = ["uploaded", "parsing", "mapped", "in_review", "applied"];
     for (let index = 0; index < path.length - 1; index += 1) {
       expect(canTransition("import", path[index], path[index + 1])).toBe(true);

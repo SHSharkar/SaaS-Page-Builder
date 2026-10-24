@@ -17,18 +17,20 @@ export function SiteTabs({ siteId }: { siteId: string }) {
   ];
 
   return (
-    <div className="-mx-1 mb-6 overflow-x-auto border-b border-line">
+    <div className="-mx-1 mb-6 overflow-x-auto border-b border-slate-200">
       <nav className="flex min-w-max gap-1 px-1" aria-label="Site sections">
         {tabs.map((tab) => {
-          const active = tab.exact ? pathname === tab.href : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+          const active = tab.exact
+            ? pathname === tab.href
+            : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
           return (
             <Link
               key={tab.href}
               href={tab.href}
               className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-medium transition ${
                 active
-                  ? "border-ink-900 text-ink-900"
-                  : "border-transparent text-slate-500 hover:border-line hover:text-ink-900"
+                  ? "border-slate-950 text-slate-950"
+                  : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-950"
               }`}
             >
               {tab.label}

@@ -2,6 +2,10 @@ import { z } from "zod";
 import { ButtonLink, Eyebrow, Glyph, MediaImage, Section, SectionHeading, Stars } from "../shell";
 import type { BlockDefinition } from "../types";
 import { LiveJackpot } from "@/components/blocks/live-jackpot";
+import { AnnouncementStrip } from "@/components/blocks/announcement-strip";
+import { GalleryLightbox } from "@/components/blocks/gallery-lightbox";
+import { TabsPanel } from "@/components/blocks/tabs-panel";
+import { SITE_CARD, SITE_MEDIA_PLACEHOLDER, cn } from "@/lib/theme-classes";
 
 const ctaSchema = z
   .object({
@@ -16,77 +20,34 @@ const mediaSchema = z
   .nullable()
   .catch(null);
 
-export const announcementBar: BlockDefinition<{
-  message: string;
-  link: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
-  tone: "accent" | "dark" | "surface";
-}> = {
-  alias: "announcement-bar",
-  name: "Announcement bar",
-  group: "site-frame",
-  description: "A single line above the header for a launch, a promo code or a licensing notice.",
-  summary: "One-line strip above the header",
-  fields: [
-    { key: "message", label: "Message", type: "text", default: "Weekend boost: use code TROFEO300 for 300 free spins" },
-    { key: "link", label: "Link", type: "link", default: { label: "Claim", href: "/join", style: "ghost" } },
-    {
-      key: "tone",
-      label: "Tone",
-      type: "select",
-      options: [
-        { label: "Accent", value: "accent" },
-        { label: "Deep dark", value: "dark" },
-        { label: "Surface", value: "surface" },
-      ],
-      default: "accent",
-    },
-  ],
-  defaults: {
-    message: "Weekend boost: use code TROFEO300 for 300 free spins",
-    link: { label: "Claim", href: "/join", style: "ghost" },
-    tone: "accent",
-  },
-  schema: z.looseObject({
-    message: z.string().catch(""),
-    link: ctaSchema,
-    tone: z.enum(["accent", "dark", "surface"]).catch("accent"),
-  }),
-  render: ({ message, link, tone }) => {
-    const styles =
-      tone === "accent"
-        ? { background: "var(--site-accent)", color: "var(--site-accent-contrast)" }
-        : tone === "dark"
-          ? { background: "#05080f", color: "#f4f6fb" }
-          : { background: "var(--site-surface)", color: "var(--site-text)" };
-    return (
-      <div className="px-4 py-2 text-center text-[12px] font-medium" style={styles} data-block-section="">
-        <span className="mr-2">{message}</span>
-        {link?.label ? (
-          <a href={link.href || "#"} className="underline decoration-1 underline-offset-2">
-            {link.label}
-          </a>
-        ) : null}
-      </div>
-    );
-  },
-};
-
 export const gameGrid: BlockDefinition<{
   eyebrow: string;
   title: string;
   description: string;
   columns: "3" | "4" | "5";
-  games: { name: string; provider: string; image: { id: string; alt?: string } | null; href: string; badge: string }[];
+  games: {
+    name: string;
+    provider: string;
+    image: { id: string; alt?: string } | null;
+    href: string;
+    badge: string;
+  }[];
 }> = {
   alias: "game-grid",
   name: "Game grid",
   group: "content",
+  wave: 1,
   description: "A shelf of game tiles with provider names, an optional badge and outbound links.",
   summary: "Shelf of game tiles",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Play now" },
     { key: "title", label: "Heading", type: "text", default: "This week's most played" },
-    { key: "description", label: "Intro", type: "textarea", default: "Fresh releases and old favourites, all counting towards trophies." },
+    {
+      key: "description",
+      label: "Intro",
+      type: "textarea",
+      default: "Fresh releases and old favorites, all counting towards trophies.",
+    },
     {
       key: "columns",
       label: "Columns",
@@ -118,7 +79,7 @@ export const gameGrid: BlockDefinition<{
   defaults: {
     eyebrow: "Play now",
     title: "This week's most played",
-    description: "Fresh releases and old favourites, all counting towards trophies.",
+    description: "Fresh releases and old favorites, all counting towards trophies.",
     columns: "4",
     games: [
       { name: "Coin Blitz", provider: "Northern Lights", image: null, href: "/games/coin-blitz", badge: "Hot" },
@@ -145,28 +106,42 @@ export const gameGrid: BlockDefinition<{
       .catch([]),
   }),
   render: ({ eyebrow, title, description, columns, games, appearance }) => {
-    const grid = columns === "3" ? "sm:grid-cols-3" : columns === "5" ? "sm:grid-cols-3 lg:grid-cols-5" : "sm:grid-cols-2 lg:grid-cols-4";
+    const grid =
+      columns === "3"
+        ? "sm:grid-cols-3"
+        : columns === "5"
+          ? "sm:grid-cols-3 lg:grid-cols-5"
+          : "sm:grid-cols-2 lg:grid-cols-4";
     return (
       <Section appearance={appearance}>
         <SectionHeading eyebrow={eyebrow} title={title} description={description} />
-        <div className={`grid grid-cols-2 gap-3 ${grid}`}>
+        <div className={cn("grid grid-cols-2 gap-3", grid)}>
           {games.map((game, index) => (
             <a
               key={`${game.name}-${index}`}
               href={game.href || "#"}
-              className="group relative block overflow-hidden rounded-[var(--site-radius-md)] border card-surface transition hover:-translate-y-0.5"
+              className={cn(
+                "group relative block overflow-hidden rounded-site-md border transition hover:-translate-y-0.5",
+                SITE_CARD,
+              )}
             >
               <div className="relative aspect-[4/3] overflow-hidden">
-                <MediaImage value={game.image} alt={game.name} rounded={false} className="h-full w-full object-cover" fallbackLabel={game.name} />
+                <MediaImage
+                  value={game.image}
+                  alt={game.name}
+                  rounded={false}
+                  className="h-full w-full object-cover"
+                  fallbackLabel={game.name}
+                />
                 {game.badge ? (
-                  <span className="absolute left-2 top-2 rounded-full bg-[color:var(--site-accent)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--site-accent-contrast)]">
+                  <span className="absolute left-2 top-2 rounded-full bg-site-accent px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-site-accent-contrast">
                     {game.badge}
                   </span>
                 ) : null}
               </div>
               <div className="px-3 py-2.5">
-                <p className="truncate text-[13px] font-semibold text-[color:var(--site-text)]">{game.name}</p>
-                <p className="truncate text-[11px] text-[color:var(--site-muted)]">{game.provider}</p>
+                <p className="text-[13px] font-semibold text-site-text">{game.name}</p>
+                <p className="text-[11px] text-site-muted">{game.provider}</p>
               </div>
             </a>
           ))}
@@ -186,19 +161,25 @@ export const testimonialQuote: BlockDefinition<{
   alias: "testimonial-quote",
   name: "Testimonial",
   group: "conversion",
-  description: "One player quote with a rating, attribution and optional photo. Reads best on a coloured band.",
+  wave: 1,
+  description: "One player quote with a rating, attribution and optional photo.",
   summary: "Single quote with rating",
   fields: [
-    { key: "quote", label: "Quote", type: "textarea", default: "I redeemed my first gift card eleven days after joining. No fine print games." },
+    {
+      key: "quote",
+      label: "Quote",
+      type: "textarea",
+      default: "I redeemed my first gift card eleven days after joining. No fine print games.",
+    },
     { key: "author", label: "Name", type: "text", default: "Mara K." },
-    { key: "detail", label: "Detail", type: "text", default: "Player since 2024 · verified redemption" },
+    { key: "detail", label: "Detail", type: "text", default: "Player since 2024 . verified redemption" },
     { key: "rating", label: "Rating out of 5", type: "number", min: 0, max: 5, default: 5 },
     { key: "avatar", label: "Photo", type: "image" },
   ],
   defaults: {
     quote: "I redeemed my first gift card eleven days after joining. No fine print games.",
     author: "Mara K.",
-    detail: "Player since 2024 · verified redemption",
+    detail: "Player since 2024 . verified redemption",
     rating: 5,
     avatar: null,
   },
@@ -211,10 +192,10 @@ export const testimonialQuote: BlockDefinition<{
   }),
   render: ({ quote, author, detail, rating, avatar, appearance }) => (
     <Section appearance={appearance ?? { spacing: "lg", background: "surface" }}>
-      <figure className="mx-auto max-w-3xl text-center">
+      <figure className="text-center">
         <Stars rating={rating} size={18} />
-        <blockquote className="mt-5 font-heading text-2xl leading-snug tracking-tight text-[color:var(--site-text)] sm:text-3xl">
-          “{quote}”
+        <blockquote className="mt-5 font-heading text-2xl leading-snug tracking-tight text-site-text sm:text-3xl">
+          "{quote}"
         </blockquote>
         <figcaption className="mt-6 flex items-center justify-center gap-3">
           {avatar?.id ? (
@@ -223,247 +204,18 @@ export const testimonialQuote: BlockDefinition<{
             </span>
           ) : (
             <span
-              className="grid h-10 w-10 place-items-center rounded-full text-[13px] font-bold"
-              style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
+              className="grid h-10 w-10 place-items-center rounded-full bg-site-accent text-[13px] font-bold text-site-accent-contrast"
               aria-hidden="true"
             >
               {author.trim().charAt(0) || "?"}
             </span>
           )}
           <span className="text-left">
-            <span className="block text-[13px] font-semibold text-[color:var(--site-text)]">{author}</span>
-            <span className="block text-[11px] text-[color:var(--site-muted)]">{detail}</span>
+            <span className="block text-[13px] font-semibold text-site-text">{author}</span>
+            <span className="block text-[11px] text-site-muted">{detail}</span>
           </span>
         </figcaption>
       </figure>
-    </Section>
-  ),
-};
-
-export const jackpotCounter: BlockDefinition<{
-  label: string;
-  amount: number;
-  currency: string;
-  subline: string;
-  cta: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
-  note: string;
-}> = {
-  alias: "jackpot-counter",
-  name: "Jackpot counter",
-  group: "money",
-  description: "A large ticking number with one button. Best used once per page, high on the screen.",
-  summary: "Ticking prize number",
-  fields: [
-    { key: "label", label: "Label", type: "text", default: "This week's trophy pool" },
-    { key: "amount", label: "Starting amount", type: "number", min: 0, default: 250000 },
-    { key: "currency", label: "Currency symbol", type: "text", default: "$" },
-    { key: "subline", label: "Sub-line", type: "text", default: "Every round you play adds to the pool." },
-    { key: "cta", label: "Button", type: "link", default: { label: "Play for the pool", href: "/join", style: "solid" } },
-    { key: "note", label: "Fine print", type: "text", default: "Illustrative pool · trophies are not cash" },
-  ],
-  defaults: {
-    label: "This week's trophy pool",
-    amount: 250000,
-    currency: "$",
-    subline: "Every round you play adds to the pool.",
-    cta: { label: "Play for the pool", href: "/join", style: "solid" },
-    note: "Illustrative pool · trophies are not cash",
-  },
-  schema: z.looseObject({
-    label: z.string().catch(""),
-    amount: z.coerce.number().min(0).catch(0),
-    currency: z.string().max(4).catch("$"),
-    subline: z.string().catch(""),
-    cta: ctaSchema,
-    note: z.string().catch(""),
-  }),
-  render: ({ label, amount, currency, subline, cta, note, appearance }) => (
-    <Section appearance={appearance ?? { spacing: "lg", background: "dark" }}>
-      <div className="mx-auto max-w-2xl">
-        <LiveJackpot start={amount} currency={currency} label={label} />
-        {subline ? <p className="mt-3 text-center text-sm text-[color:var(--site-muted)]">{subline}</p> : null}
-        <div className="mt-6 flex justify-center">
-          <ButtonLink link={cta} size="lg" />
-        </div>
-        {note ? <p className="mt-4 text-center text-[11px] text-[color:var(--site-muted)]">{note}</p> : null}
-      </div>
-    </Section>
-  ),
-};
-
-export const liveWinners: BlockDefinition<{
-  title: string;
-  subtitle: string;
-  rows: { player: string; prize: string; game: string }[];
-  note: string;
-}> = {
-  alias: "live-winners",
-  name: "Recent winners",
-  group: "conversion",
-  description: "A short list of recent redemptions. Keeps the page feeling current without a feed integration.",
-  summary: "List of recent wins",
-  wave: 2,
-  fields: [
-    { key: "title", label: "Heading", type: "text", default: "Redeemed in the last 24 hours" },
-    { key: "subtitle", label: "Intro", type: "text", default: "Payouts land within one working day." },
-    {
-      key: "rows",
-      label: "Rows",
-      type: "repeater",
-      defaultItem: { player: "Player", prize: "$50 gift card", game: "Coin Blitz" },
-      itemLabel: (item) => String(item.player ?? "Player"),
-      min: 1,
-      max: 10,
-      fields: [
-        { key: "player", label: "Player", type: "text", default: "Player" },
-        { key: "prize", label: "Prize", type: "text", default: "$50 gift card" },
-        { key: "game", label: "Game", type: "text", default: "Coin Blitz" },
-      ],
-    },
-    { key: "note", label: "Note", type: "text", default: "Names shortened for privacy. Values are what the player asked for." },
-  ],
-  defaults: {
-    title: "Redeemed in the last 24 hours",
-    subtitle: "Payouts land within one working day.",
-    rows: [
-      { player: "Mara K.", prize: "$50 gift card", game: "Coin Blitz" },
-      { player: "Deni P.", prize: "$25 bonus cash", game: "Trophy Trail" },
-      { player: "Jonas V.", prize: "50 free spins", game: "Golden Gates" },
-    ],
-    note: "Names shortened for privacy. Values are what the player asked for.",
-  },
-  schema: z.looseObject({
-    title: z.string().catch(""),
-    subtitle: z.string().catch(""),
-    rows: z
-      .array(z.looseObject({ player: z.string(), prize: z.string().catch(""), game: z.string().catch("") }))
-      .catch([]),
-    note: z.string().catch(""),
-  }),
-  render: ({ title, subtitle, rows, note, appearance }) => (
-    <Section appearance={appearance}>
-      <SectionHeading title={title} description={subtitle} />
-      <ul className="divide-y divide-[color:var(--site-border)] overflow-hidden rounded-[var(--site-radius-md)] border card-surface">
-        {rows.map((row, index) => (
-          <li key={`${row.player}-${index}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <span className="flex items-center gap-2.5">
-              <span
-                className="grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold"
-                style={{ background: "color-mix(in srgb, var(--site-accent) 18%, transparent)", color: "var(--site-accent)" }}
-                aria-hidden="true"
-              >
-                {row.player.trim().charAt(0) || "•"}
-              </span>
-              <span className="text-[13px] text-[color:var(--site-text)]">{row.player}</span>
-            </span>
-            <span className="text-[12px] text-[color:var(--site-muted)]">{row.game}</span>
-            <span className="text-[13px] font-semibold" style={{ color: "var(--site-accent)" }}>
-              {row.prize}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {note ? <p className="mt-3 text-[11px] text-[color:var(--site-muted)]">{note}</p> : null}
-    </Section>
-  ),
-};
-
-export const vipTiers: BlockDefinition<{
-  eyebrow: string;
-  title: string;
-  description: string;
-  tiers: { name: string; requirement: string; perks: string[]; cta: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" }; highlighted: boolean }[];
-}> = {
-  alias: "vip-tiers",
-  name: "VIP tiers",
-  group: "money",
-  description: "Two to four tier cards showing what each level unlocks and how to reach it.",
-  summary: "Tier comparison cards",
-  wave: 2,
-  fields: [
-    { key: "eyebrow", label: "Eyebrow", type: "text", default: "Loyalty" },
-    { key: "title", label: "Heading", type: "text", default: "Trophies unlock more than rewards" },
-    { key: "description", label: "Intro", type: "textarea", default: "Every tier keeps your trophies and adds a faster payout window." },
-    {
-      key: "tiers",
-      label: "Tiers",
-      type: "repeater",
-      defaultItem: { name: "New tier", requirement: "0 trophies", perks: ["Standard support"], cta: { label: "Join", href: "/join", style: "outline" }, highlighted: false },
-      itemLabel: (item) => String(item.name ?? "Tier"),
-      min: 2,
-      max: 4,
-      fields: [
-        { key: "name", label: "Tier name", type: "text", default: "New tier" },
-        { key: "requirement", label: "Requirement", type: "text", default: "0 trophies" },
-        { key: "perks", label: "Perks (one per line)", type: "list", default: ["Standard support"] },
-        { key: "cta", label: "Button", type: "link", default: { label: "Join", href: "/join", style: "outline" } },
-        { key: "highlighted", label: "Highlight this tier", type: "boolean", default: false },
-      ],
-    },
-  ],
-  defaults: {
-    eyebrow: "Loyalty",
-    title: "Trophies unlock more than rewards",
-    description: "Every tier keeps your trophies and adds a faster payout window.",
-    tiers: [
-      { name: "Bronze", requirement: "0 trophies", perks: ["Standard support", "7-day payout window"], cta: { label: "Start free", href: "/join", style: "outline" }, highlighted: false },
-      { name: "Gold", requirement: "5,000 trophies", perks: ["24-hour payouts", "Monthly bonus drop", "Priority support"], cta: { label: "See rewards", href: "/rewards/wallet", style: "solid" }, highlighted: true },
-      { name: "Platinum", requirement: "25,000 trophies", perks: ["Same-day payouts", "Dedicated host", "Invite-only events"], cta: { label: "See rewards", href: "/rewards/wallet", style: "outline" }, highlighted: false },
-    ],
-  },
-  schema: z.looseObject({
-    eyebrow: z.string().catch(""),
-    title: z.string().catch(""),
-    description: z.string().catch(""),
-    tiers: z
-      .array(
-        z.looseObject({
-          name: z.string(),
-          requirement: z.string().catch(""),
-          perks: z.array(z.string()).catch([]),
-          cta: ctaSchema,
-          highlighted: z.coerce.boolean().catch(false),
-        }),
-      )
-      .catch([]),
-  }),
-  render: ({ eyebrow, title, description, tiers, appearance }) => (
-    <Section appearance={appearance}>
-      <SectionHeading eyebrow={eyebrow} title={title} description={description} align="center" />
-      <div className={`grid gap-4 ${tiers.length >= 3 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
-        {tiers.map((tier, index) => (
-          <div
-            key={`${tier.name}-${index}`}
-            className="relative flex flex-col rounded-[var(--site-radius-lg)] border p-5"
-            style={{
-              background: tier.highlighted ? "color-mix(in srgb, var(--site-accent) 10%, var(--site-surface))" : "var(--site-surface)",
-              borderColor: tier.highlighted ? "var(--site-accent)" : "var(--site-border)",
-            }}
-          >
-            {tier.highlighted ? (
-              <span
-                className="absolute -top-2.5 left-5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
-              >
-                Most popular
-              </span>
-            ) : null}
-            <p className="font-heading text-xl tracking-tight text-[color:var(--site-text)]">{tier.name}</p>
-            <p className="mt-1 text-[11px] uppercase tracking-wider text-[color:var(--site-muted)]">{tier.requirement}</p>
-            <ul className="mt-4 flex-1 space-y-2">
-              {tier.perks.map((perk, perkIndex) => (
-                <li key={perkIndex} className="flex items-start gap-2 text-[13px] text-[color:var(--site-muted)]">
-                  <Glyph name="check" size={14} className="mt-0.5 shrink-0" />
-                  <span>{perk}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-5">
-              <ButtonLink link={tier.cta} className="w-full justify-center" />
-            </div>
-          </div>
-        ))}
-      </div>
     </Section>
   ),
 };
@@ -476,13 +228,18 @@ export const responsibleGaming: BlockDefinition<{
 }> = {
   alias: "responsible-gaming",
   name: "Responsible gaming",
-  group: "content",
+  group: "money",
+  wave: 1,
   description: "The compliance block: limits, support links and the licence line, written once and reused.",
   summary: "Compliance and support links",
-  wave: 2,
   fields: [
     { key: "title", label: "Heading", type: "text", default: "Play within your limits" },
-    { key: "body", label: "Body", type: "richtext", default: "Set deposit limits before you play, not after. Support is free and confidential." },
+    {
+      key: "body",
+      label: "Body",
+      type: "richtext",
+      default: "Set deposit limits before you play, not after. Support is free and confidential.",
+    },
     {
       key: "links",
       label: "Support links",
@@ -494,7 +251,12 @@ export const responsibleGaming: BlockDefinition<{
         { key: "href", label: "Link", type: "text", default: "/responsible-play" },
       ],
     },
-    { key: "licence", label: "Licence line", type: "text", default: "Licensed and regulated · 18+ · BeGambleAware" },
+    {
+      key: "licence",
+      label: "Licence line",
+      type: "text",
+      default: "Licensed and regulated . 18+ . BeGambleAware",
+    },
   ],
   defaults: {
     title: "Play within your limits",
@@ -504,7 +266,7 @@ export const responsibleGaming: BlockDefinition<{
       { label: "Take a break", href: "/responsible-play#break" },
       { label: "Talk to someone", href: "/responsible-play#support" },
     ],
-    licence: "Licensed and regulated · 18+ · BeGambleAware",
+    licence: "Licensed and regulated . 18+ . BeGambleAware",
   },
   schema: z.looseObject({
     title: z.string().catch(""),
@@ -517,16 +279,16 @@ export const responsibleGaming: BlockDefinition<{
       <div className="grid gap-6 md:grid-cols-[1.3fr_1fr] md:items-center">
         <div>
           <Eyebrow>Responsible play</Eyebrow>
-          <h2 className="font-heading text-2xl tracking-tight text-[color:var(--site-text)]">{title}</h2>
-          <p className="mt-2 text-sm leading-relaxed text-[color:var(--site-muted)]">{body}</p>
-          <p className="mt-3 text-[11px] uppercase tracking-wider text-[color:var(--site-muted)]">{licence}</p>
+          <h2 className="font-heading text-2xl tracking-tight text-site-text">{title}</h2>
+          <p className="mt-2 text-sm leading-relaxed text-site-muted">{body}</p>
+          <p className="mt-3 text-[11px] uppercase tracking-wider text-site-muted">{licence}</p>
         </div>
         <ul className="flex flex-wrap gap-2 md:justify-end">
           {links.map((link) => (
             <li key={link.label}>
               <a
                 href={link.href || "#"}
-                className="inline-flex rounded-full border border-[color:var(--site-border)] px-3.5 py-2 text-[12px] font-medium text-[color:var(--site-text)] transition hover:bg-[color:var(--site-bg)]"
+                className="inline-flex rounded-full border border-site-border px-3.5 py-2 text-xs font-medium text-site-text transition hover:bg-site-bg"
               >
                 {link.label}
               </a>
@@ -538,227 +300,304 @@ export const responsibleGaming: BlockDefinition<{
   ),
 };
 
-export const appDownload: BlockDefinition<{
+export const rawHtml: BlockDefinition<{
   title: string;
-  subtitle: string;
-  iosUrl: string;
-  androidUrl: string;
-  qr: { id: string; alt?: string } | null;
-  points: string[];
+  html: string;
+  height: "compact" | "regular" | "tall";
 }> = {
-  alias: "app-download",
-  name: "App download",
-  group: "conversion",
-  description: "Store buttons, a QR code and three short reasons to install.",
-  summary: "Store links with QR code",
-  wave: 2,
+  alias: "raw-html",
+  name: "Raw HTML (sandboxed)",
+  group: "utility",
+  wave: 1,
+  adminOnly: true,
+  description: "Administrator-only escape hatch rendered inside a strict zero-script sandboxed frame.",
+  summary: "Admin-only sandboxed HTML",
   fields: [
-    { key: "title", label: "Heading", type: "text", default: "Play from your pocket" },
-    { key: "subtitle", label: "Sub-line", type: "textarea", default: "Trophies sync across web and app. Face ID sign-in, one balance." },
-    { key: "iosUrl", label: "App Store URL", type: "text", default: "https://apps.apple.com/" },
-    { key: "androidUrl", label: "Google Play URL", type: "text", default: "https://play.google.com/store" },
-    { key: "qr", label: "QR code image", type: "image" },
-    { key: "points", label: "Reasons", type: "list", default: ["Same trophies, same wallet", "Faster payouts", "Push alerts for bonus drops"] },
+    { key: "title", label: "Frame title (screen readers)", type: "text", default: "Custom HTML section" },
+    {
+      key: "html",
+      label: "HTML markup",
+      type: "textarea",
+      default: "<div style=\"font-family:sans-serif;padding:16px\"><h3>Custom HTML block</h3><p>Rendered inside a scriptless sandbox.</p></div>",
+    },
+    {
+      key: "height",
+      label: "Frame height",
+      type: "select",
+      options: [
+        { label: "Compact (160px)", value: "compact" },
+        { label: "Regular (320px)", value: "regular" },
+        { label: "Tall (520px)", value: "tall" },
+      ],
+      default: "regular",
+    },
   ],
   defaults: {
-    title: "Play from your pocket",
-    subtitle: "Trophies sync across web and app. Face ID sign-in, one balance.",
-    iosUrl: "https://apps.apple.com/",
-    androidUrl: "https://play.google.com/store",
-    qr: null,
-    points: ["Same trophies, same wallet", "Faster payouts", "Push alerts for bonus drops"],
+    title: "Custom HTML section",
+    html: "<div><h3>Custom HTML block</h3><p>Rendered inside a scriptless sandbox.</p></div>",
+    height: "regular",
   },
   schema: z.looseObject({
-    title: z.string().catch(""),
-    subtitle: z.string().catch(""),
-    iosUrl: z.string().catch(""),
-    androidUrl: z.string().catch(""),
-    qr: mediaSchema,
-    points: z.array(z.string()).catch([]),
+    title: z.string().catch("Custom HTML section"),
+    html: z.string().catch(""),
+    height: z.enum(["compact", "regular", "tall"]).catch("regular"),
   }),
-  render: ({ title, subtitle, iosUrl, androidUrl, qr, points, appearance }) => (
-    <Section appearance={appearance}>
-      <div className="grid gap-6 rounded-[var(--site-radius-lg)] border card-surface p-6 sm:grid-cols-[1.4fr_1fr] sm:p-8">
-        <div>
-          <Eyebrow>Mobile</Eyebrow>
-          <h2 className="font-heading text-2xl tracking-tight text-[color:var(--site-text)]">{title}</h2>
-          <p className="mt-2 text-sm leading-relaxed text-[color:var(--site-muted)]">{subtitle}</p>
-          <ul className="mt-4 space-y-1.5">
-            {points.map((point, index) => (
-              <li key={index} className="flex items-center gap-2 text-[13px] text-[color:var(--site-muted)]">
-                <Glyph name="check" size={14} />
-                {point}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <a href={iosUrl || "#"} className="btn btn-solid px-4 py-2 text-[13px]">
-              App Store
-            </a>
-            <a href={androidUrl || "#"} className="btn btn-outline px-4 py-2 text-[13px]">
-              Google Play
-            </a>
-          </div>
+  render: ({ title, html, height, appearance }) => {
+    const heightClass = { compact: "h-40", regular: "h-80", tall: "h-[520px]" }[height];
+    const cleanMarkup = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, "");
+    const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${cleanMarkup}</body></html>`;
+    return (
+      <Section appearance={appearance}>
+        <div className="overflow-hidden rounded-site-md border border-site-border bg-site-surface">
+          <iframe
+            sandbox=""
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            title={title || "Custom HTML section"}
+            srcDoc={srcDoc}
+            className={cn("w-full border-0", heightClass)}
+          />
         </div>
-        <div className="grid place-items-center">
-          {qr?.id ? (
-            <MediaImage value={qr} alt="Scan to install" className="h-32 w-32 object-contain" />
-          ) : (
-            <div className="media-placeholder h-32 w-32 rounded-[var(--site-radius-md)] text-[11px]">QR code</div>
-          )}
+      </Section>
+    );
+  },
+};
+
+export const announcementBar: BlockDefinition<{
+  message: string;
+  link: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
+  tone: "accent" | "dark" | "surface";
+  dismissible: boolean;
+}> = {
+  alias: "announcement-bar",
+  name: "Announcement bar",
+  group: "site-frame",
+  wave: 2,
+  description: "A dismissible single line above the header for a launch, a promo code or a licensing notice.",
+  summary: "Dismissible strip above header",
+  fields: [
+    {
+      key: "message",
+      label: "Message",
+      type: "text",
+      default: "Weekend boost: use code TROFEO300 for 300 free spins",
+    },
+    {
+      key: "link",
+      label: "Link",
+      type: "link",
+      default: { label: "Claim", href: "/join", style: "ghost" },
+    },
+    {
+      key: "tone",
+      label: "Tone",
+      type: "select",
+      options: [
+        { label: "Accent", value: "accent" },
+        { label: "Deep dark", value: "dark" },
+        { label: "Surface", value: "surface" },
+      ],
+      default: "accent",
+    },
+    { key: "dismissible", label: "Allow visitors to dismiss", type: "boolean", default: true },
+  ],
+  defaults: {
+    message: "Weekend boost: use code TROFEO300 for 300 free spins",
+    link: { label: "Claim", href: "/join", style: "ghost" },
+    tone: "accent",
+    dismissible: true,
+  },
+  schema: z.looseObject({
+    message: z.string().catch(""),
+    link: ctaSchema,
+    tone: z.enum(["accent", "dark", "surface"]).catch("accent"),
+    dismissible: z.coerce.boolean().catch(true),
+  }),
+  render: ({ message, link, tone, dismissible }) => (
+    <AnnouncementStrip
+      message={message}
+      linkLabel={link?.label}
+      linkHref={link?.href}
+      tone={tone}
+      dismissible={dismissible}
+    />
+  ),
+};
+
+export const animatedCounter: BlockDefinition<{
+  label: string;
+  amount: number;
+  currency: string;
+  suffix: string;
+  step: number;
+  subline: string;
+  cta: { label: string; href: string; style?: "solid" | "outline" | "ghost" | "light" };
+  note: string;
+}> = {
+  alias: "animated-counter",
+  name: "Animated counter",
+  group: "conversion",
+  wave: 2,
+  description: "A rising jackpot or trophy ticker with a label, start value and call to action.",
+  summary: "Rising jackpot or trophy ticker",
+  fields: [
+    { key: "label", label: "Label", type: "text", default: "This week's trophy pool" },
+    { key: "amount", label: "Starting value", type: "number", min: 0, default: 250000 },
+    { key: "currency", label: "Prefix symbol", type: "text", default: "$" },
+    { key: "suffix", label: "Suffix", type: "text", default: "" },
+    { key: "step", label: "Increment per tick", type: "number", min: 0, default: 3 },
+    { key: "subline", label: "Subline", type: "text", default: "Every round you play adds to the pool." },
+    {
+      key: "cta",
+      label: "Button",
+      type: "link",
+      default: { label: "Play for the pool", href: "/join", style: "solid" },
+    },
+    { key: "note", label: "Fine print", type: "text", default: "Illustrative pool . trophies are not cash" },
+  ],
+  defaults: {
+    label: "This week's trophy pool",
+    amount: 250000,
+    currency: "$",
+    suffix: "",
+    step: 3,
+    subline: "Every round you play adds to the pool.",
+    cta: { label: "Play for the pool", href: "/join", style: "solid" },
+    note: "Illustrative pool . trophies are not cash",
+  },
+  schema: z.looseObject({
+    label: z.string().catch(""),
+    amount: z.coerce.number().min(0).catch(0),
+    currency: z.string().max(6).catch("$"),
+    suffix: z.string().max(12).catch(""),
+    step: z.coerce.number().min(0).catch(3),
+    subline: z.string().catch(""),
+    cta: ctaSchema,
+    note: z.string().catch(""),
+  }),
+  render: ({ label, amount, currency, suffix, step, subline, cta, note, appearance }) => (
+    <Section appearance={appearance ?? { spacing: "lg", background: "dark" }}>
+      <div>
+        <LiveJackpot start={amount} currency={currency} suffix={suffix} step={step} label={label} />
+        {subline ? <p className="mt-3 text-center text-sm text-site-muted">{subline}</p> : null}
+        <div className="mt-6 flex justify-center">
+          <ButtonLink link={cta} size="lg" />
         </div>
+        {note ? <p className="mt-4 text-center text-[11px] text-site-muted">{note}</p> : null}
       </div>
     </Section>
   ),
 };
 
-export const teamGrid: BlockDefinition<{
+export const payoutProofCard: BlockDefinition<{
   eyebrow: string;
   title: string;
   description: string;
-  people: { name: string; role: string; photo: { id: string; alt?: string } | null; bio: string }[];
+  proofs: { winner: string; amount: string; game: string; paidOn: string }[];
+  note: string;
 }> = {
-  alias: "team-grid",
-  name: "Team",
-  group: "content",
-  description: "Portraits with names and roles — useful for trust pages and operator transparency.",
-  summary: "People cards",
+  alias: "payout-proof-card",
+  name: "Payout proof cards",
+  group: "money",
   wave: 2,
+  description: "Masked winner names, amounts, games and dates for verified redemption social proof.",
+  summary: "Masked winner, amount, game and date",
   fields: [
-    { key: "eyebrow", label: "Eyebrow", type: "text", default: "Who we are" },
-    { key: "title", label: "Heading", type: "text", default: "Real people, real payouts" },
-    { key: "description", label: "Intro", type: "text", default: "A small team in Ta' Xbiex, reachable seven days a week." },
+    { key: "eyebrow", label: "Eyebrow", type: "text", default: "Verified payouts" },
+    { key: "title", label: "Heading", type: "text", default: "Recent verified redemptions" },
     {
-      key: "people",
-      label: "People",
+      key: "description",
+      label: "Description",
+      type: "text",
+      default: "Settled within 24 hours of confirmation.",
+    },
+    {
+      key: "proofs",
+      label: "Payout rows",
       type: "repeater",
-      defaultItem: { name: "New person", role: "Role", photo: null, bio: "" },
-      itemLabel: (item) => String(item.name ?? "Person"),
+      defaultItem: { winner: "M*** K.", amount: "$150", game: "Coin Blitz", paidOn: "2026-10-20" },
+      itemLabel: (item) => `${item.winner ?? "Player"} (${item.amount ?? ""})`,
       min: 1,
-      max: 8,
+      max: 12,
       fields: [
-        { key: "name", label: "Name", type: "text", default: "New person" },
-        { key: "role", label: "Role", type: "text", default: "Role" },
-        { key: "photo", label: "Photo", type: "image" },
-        { key: "bio", label: "One line", type: "text", default: "" },
+        { key: "winner", label: "Masked winner", type: "text", default: "M*** K." },
+        { key: "amount", label: "Amount", type: "text", default: "$150" },
+        { key: "game", label: "Game", type: "text", default: "Coin Blitz" },
+        { key: "paidOn", label: "Date", type: "text", default: "2026-10-20" },
       ],
+    },
+    {
+      key: "note",
+      label: "Privacy note",
+      type: "text",
+      default: "Player names are masked for privacy. Amounts match settled redemptions.",
     },
   ],
   defaults: {
-    eyebrow: "Who we are",
-    title: "Real people, real payouts",
-    description: "A small team in Ta' Xbiex, reachable seven days a week.",
-    people: [
-      { name: "Ana Falzon", role: "Player support lead", photo: null, bio: "Answers the 3am messages." },
-      { name: "Ravi Menon", role: "Rewards manager", photo: null, bio: "Keeps the trophy maths honest." },
-      { name: "Sofia Borg", role: "Compliance", photo: null, bio: "Holds the licence line." },
+    eyebrow: "Verified payouts",
+    title: "Recent verified redemptions",
+    description: "Settled within 24 hours of confirmation.",
+    proofs: [
+      { winner: "M*** K.", amount: "$150", game: "Coin Blitz", paidOn: "2026-10-23" },
+      { winner: "D*** P.", amount: "$75", game: "Trophy Trail", paidOn: "2026-10-22" },
+      { winner: "J*** V.", amount: "$300", game: "Golden Gates", paidOn: "2026-10-21" },
     ],
+    note: "Player names are masked for privacy. Amounts match settled redemptions.",
   },
   schema: z.looseObject({
     eyebrow: z.string().catch(""),
     title: z.string().catch(""),
     description: z.string().catch(""),
-    people: z
-      .array(z.looseObject({ name: z.string(), role: z.string().catch(""), photo: mediaSchema, bio: z.string().catch("") }))
+    proofs: z
+      .array(
+        z.looseObject({
+          winner: z.string().catch("Player"),
+          amount: z.string().catch(""),
+          game: z.string().catch(""),
+          paidOn: z.string().catch(""),
+        }),
+      )
       .catch([]),
+    note: z.string().catch(""),
   }),
-  render: ({ eyebrow, title, description, people, appearance }) => (
+  render: ({ eyebrow, title, description, proofs, note, appearance }) => (
     <Section appearance={appearance}>
       <SectionHeading eyebrow={eyebrow} title={title} description={description} />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {people.map((person, index) => (
-          <div key={`${person.name}-${index}`} className="rounded-[var(--site-radius-md)] border card-surface p-4">
-            <div className="mb-3 h-40 overflow-hidden rounded-[var(--site-radius-sm)]">
-              <MediaImage value={person.photo} alt={person.name} rounded={false} className="h-full w-full object-cover" fallbackLabel={person.name} />
+        {proofs.map((proof, index) => (
+          <div key={index} className={cn("rounded-site-md border p-5", SITE_CARD)}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-site-text">
+                <Glyph name="check" size={14} className="text-site-accent" />
+                {proof.winner}
+              </span>
+              <span className="font-mono text-xs text-site-muted">{proof.paidOn}</span>
             </div>
-            <p className="text-[14px] font-semibold text-[color:var(--site-text)]">{person.name}</p>
-            <p className="text-[11px] uppercase tracking-wider text-[color:var(--site-accent)]">{person.role}</p>
-            {person.bio ? <p className="mt-2 text-[12px] leading-relaxed text-[color:var(--site-muted)]">{person.bio}</p> : null}
+            <p className="mt-3 font-heading text-2xl font-bold text-site-accent">{proof.amount}</p>
+            <p className="mt-1 text-xs text-site-muted">{proof.game}</p>
           </div>
         ))}
       </div>
+      {note ? <p className="mt-4 text-xs text-site-muted">{note}</p> : null}
     </Section>
   ),
 };
 
-export const timeline: BlockDefinition<{
-  eyebrow: string;
-  title: string;
-  steps: { marker: string; title: string; text: string }[];
-}> = {
-  alias: "timeline",
-  name: "Timeline",
-  group: "content",
-  description: "A vertical sequence of milestones — release notes, campaign phases or how a payout runs.",
-  summary: "Vertical milestones",
-  wave: 2,
-  fields: [
-    { key: "eyebrow", label: "Eyebrow", type: "text", default: "How it works" },
-    { key: "title", label: "Heading", type: "text", default: "From first spin to gift card" },
-    {
-      key: "steps",
-      label: "Milestones",
-      type: "repeater",
-      defaultItem: { marker: "Today", title: "New milestone", text: "" },
-      itemLabel: (item) => String(item.title ?? "Milestone"),
-      min: 2,
-      max: 8,
-      fields: [
-        { key: "marker", label: "When", type: "text", default: "Today" },
-        { key: "title", label: "Title", type: "text", default: "New milestone" },
-        { key: "text", label: "Detail", type: "textarea", default: "" },
-      ],
-    },
-  ],
-  defaults: {
-    eyebrow: "How it works",
-    title: "From first spin to gift card",
-    steps: [
-      { marker: "Step 1", title: "Join free", text: "No deposit needed to open an account and start collecting." },
-      { marker: "Step 2", title: "Play as usual", text: "Every eligible round adds trophies to your wallet." },
-      { marker: "Step 3", title: "Redeem", text: "Pick a reward, confirm, and the code lands within a day." },
-    ],
-  },
-  schema: z.looseObject({
-    eyebrow: z.string().catch(""),
-    title: z.string().catch(""),
-    steps: z.array(z.looseObject({ marker: z.string().catch(""), title: z.string(), text: z.string().catch("") })).catch([]),
-  }),
-  render: ({ eyebrow, title, steps, appearance }) => (
-    <Section appearance={appearance}>
-      <SectionHeading eyebrow={eyebrow} title={title} />
-      <ol className="relative space-y-6 border-l border-[color:var(--site-border)] pl-6">
-        {steps.map((step, index) => (
-          <li key={`${step.title}-${index}`} className="relative">
-            <span
-              className="absolute -left-[31px] top-1 grid h-4 w-4 place-items-center rounded-full text-[9px] font-bold"
-              style={{ background: "var(--site-accent)", color: "var(--site-accent-contrast)" }}
-              aria-hidden="true"
-            >
-              {index + 1}
-            </span>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--site-accent)]">{step.marker}</p>
-            <p className="mt-1 text-[15px] font-semibold text-[color:var(--site-text)]">{step.title}</p>
-            {step.text ? <p className="mt-1 text-[13px] leading-relaxed text-[color:var(--site-muted)]">{step.text}</p> : null}
-          </li>
-        ))}
-      </ol>
-    </Section>
-  ),
-};
-
-export const imageGallery: BlockDefinition<{
+export const gallery: BlockDefinition<{
   eyebrow: string;
   title: string;
   columns: "2" | "3" | "4";
+  lightbox: boolean;
   images: { image: { id: string; alt?: string } | null; caption: string }[];
 }> = {
-  alias: "image-gallery",
+  alias: "gallery",
   name: "Gallery",
   group: "content",
-  description: "A grid of images with captions — screenshots, venues, prize photos.",
-  summary: "Image grid with captions",
   wave: 2,
+  description: "An image grid with captions and an accessible centered modal lightbox.",
+  summary: "Image grid with lightbox",
   fields: [
     { key: "eyebrow", label: "Eyebrow", type: "text", default: "Gallery" },
     { key: "title", label: "Heading", type: "text", default: "Inside the rewards store" },
@@ -773,14 +612,15 @@ export const imageGallery: BlockDefinition<{
       ],
       default: "3",
     },
+    { key: "lightbox", label: "Open images in lightbox dialog", type: "boolean", default: true },
     {
       key: "images",
       label: "Images",
       type: "repeater",
       defaultItem: { image: null, caption: "" },
-      itemLabel: (item, index) => `Image ${index + 1}`,
+      itemLabel: (_item, index) => `Image ${index + 1}`,
       min: 1,
-      max: 9,
+      max: 12,
       fields: [
         { key: "image", label: "Image", type: "image" },
         { key: "caption", label: "Caption", type: "text", default: "" },
@@ -791,6 +631,7 @@ export const imageGallery: BlockDefinition<{
     eyebrow: "Gallery",
     title: "Inside the rewards store",
     columns: "3",
+    lightbox: true,
     images: [
       { image: null, caption: "Gift cards, one code per redemption" },
       { image: null, caption: "Bonus cash lands in minutes" },
@@ -801,123 +642,332 @@ export const imageGallery: BlockDefinition<{
     eyebrow: z.string().catch(""),
     title: z.string().catch(""),
     columns: z.enum(["2", "3", "4"]).catch("3"),
+    lightbox: z.coerce.boolean().catch(true),
     images: z.array(z.looseObject({ image: mediaSchema, caption: z.string().catch("") })).catch([]),
   }),
-  render: ({ eyebrow, title, columns, images, appearance }) => {
-    const grid = columns === "2" ? "sm:grid-cols-2" : columns === "4" ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3";
+  render: ({ eyebrow, title, columns, lightbox, images, appearance }) => (
+    <Section appearance={appearance}>
+      <SectionHeading eyebrow={eyebrow} title={title} />
+      <GalleryLightbox items={images} columns={columns} enableLightbox={lightbox} />
+    </Section>
+  ),
+};
+
+export const logoStrip: BlockDefinition<{
+  title: string;
+  logos: { name: string; image: { id: string; alt?: string } | null; href: string }[];
+}> = {
+  alias: "logo-strip",
+  name: "Logo strip",
+  group: "content",
+  wave: 2,
+  description: "Game studio, payment or partner logos arranged in a balanced trust row.",
+  summary: "Studio or partner logo row",
+  fields: [
+    { key: "title", label: "Heading", type: "text", default: "Studios powering our lobby" },
+    {
+      key: "logos",
+      label: "Logos",
+      type: "repeater",
+      defaultItem: { name: "Northern Lights", image: null, href: "" },
+      itemLabel: (item) => String(item.name ?? "Partner"),
+      min: 1,
+      max: 12,
+      fields: [
+        { key: "name", label: "Partner name", type: "text", default: "Northern Lights" },
+        { key: "image", label: "Logo image", type: "image" },
+        { key: "href", label: "Optional link", type: "text", default: "" },
+      ],
+    },
+  ],
+  defaults: {
+    title: "Studios powering our lobby",
+    logos: [
+      { name: "Northern Lights", image: null, href: "" },
+      { name: "Aurora Gaming", image: null, href: "" },
+      { name: "Fableworks", image: null, href: "" },
+      { name: "Delta Spin", image: null, href: "" },
+    ],
+  },
+  schema: z.looseObject({
+    title: z.string().catch(""),
+    logos: z
+      .array(
+        z.looseObject({
+          name: z.string().catch(""),
+          image: mediaSchema,
+          href: z.string().catch(""),
+        }),
+      )
+      .catch([]),
+  }),
+  render: ({ title, logos, appearance }) => (
+    <Section appearance={appearance} className="py-8">
+      {title ? (
+        <p className="mb-5 text-center text-xs font-semibold uppercase tracking-[0.16em] text-site-muted">
+          {title}
+        </p>
+      ) : null}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {logos.map((logo, index) => {
+          const inner = logo.image?.id ? (
+            <MediaImage value={logo.image} alt={logo.name} rounded={false} className="h-10 w-auto object-contain" />
+          ) : (
+            <span className="font-heading text-sm font-semibold text-site-muted">{logo.name}</span>
+          );
+          return logo.href ? (
+            <a
+              key={index}
+              href={logo.href}
+              className="grid h-16 place-items-center rounded-site-sm border border-site-border bg-site-surface px-4 transition hover:border-site-accent"
+            >
+              {inner}
+            </a>
+          ) : (
+            <div
+              key={index}
+              className="grid h-16 place-items-center rounded-site-sm border border-site-border bg-site-surface px-4"
+            >
+              {inner}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  ),
+};
+
+export const tabs: BlockDefinition<{
+  eyebrow: string;
+  title: string;
+  description: string;
+  items: { label: string; heading: string; body: string }[];
+}> = {
+  alias: "tabs",
+  name: "Tabs",
+  group: "content",
+  wave: 2,
+  description: "Keyboard-accessible tabbed panels for bonus rules, game categories or VIP details.",
+  summary: "Tabbed content panels",
+  fields: [
+    { key: "eyebrow", label: "Eyebrow", type: "text", default: "Details" },
+    { key: "title", label: "Section title", type: "text", default: "Everything in one place" },
+    { key: "description", label: "Description", type: "textarea", default: "" },
+    {
+      key: "items",
+      label: "Tabs",
+      type: "repeater",
+      defaultItem: { label: "Overview", heading: "Overview", body: "Add tab copy here." },
+      itemLabel: (item) => String(item.label ?? "Tab"),
+      min: 2,
+      max: 8,
+      fields: [
+        { key: "label", label: "Tab button label", type: "text", default: "Overview" },
+        { key: "heading", label: "Panel heading", type: "text", default: "Overview" },
+        { key: "body", label: "Panel body", type: "textarea", default: "" },
+      ],
+    },
+  ],
+  defaults: {
+    eyebrow: "Details",
+    title: "Everything in one place",
+    description: "",
+    items: [
+      {
+        label: "Welcome bonus",
+        heading: "100% match on first deposit",
+        body: "Deposit $10 or more to unlock your matched bonus balance and 50 free spins.",
+      },
+      {
+        label: "Wagering rules",
+        heading: "Clear, upfront terms",
+        body: "Bonus funds carry a 35x playthrough within 7 days. Slots contribute 100%.",
+      },
+      {
+        label: "Payout speed",
+        heading: "Verified 24-hour withdrawals",
+        body: "Approved redemptions settle to cards and wallets inside one business day.",
+      },
+    ],
+  },
+  schema: z.looseObject({
+    eyebrow: z.string().catch(""),
+    title: z.string().catch(""),
+    description: z.string().catch(""),
+    items: z
+      .array(
+        z.looseObject({
+          label: z.string().catch("Tab"),
+          heading: z.string().catch(""),
+          body: z.string().catch(""),
+        }),
+      )
+      .catch([]),
+  }),
+  render: ({ eyebrow, title, description, items, appearance }) => (
+    <Section appearance={appearance}>
+      <SectionHeading eyebrow={eyebrow} title={title} description={description} />
+      <TabsPanel tabs={items} />
+    </Section>
+  ),
+};
+
+export const tableOfContents: BlockDefinition<{
+  title: string;
+  entries: { label: string; anchor: string }[];
+}> = {
+  alias: "table-of-contents",
+  name: "Table of contents",
+  group: "content",
+  wave: 2,
+  description: "Deep-link jump list pointing to section anchor identifiers on long review or legal pages.",
+  summary: "Jump links to page anchors",
+  fields: [
+    { key: "title", label: "Heading", type: "text", default: "On this page" },
+    {
+      key: "entries",
+      label: "Jump links",
+      type: "repeater",
+      defaultItem: { label: "Bonuses", anchor: "bonuses" },
+      itemLabel: (item) => String(item.label ?? "Section"),
+      min: 1,
+      max: 16,
+      fields: [
+        { key: "label", label: "Label", type: "text", default: "Bonuses" },
+        { key: "anchor", label: "Target anchor id (without #)", type: "text", default: "bonuses" },
+      ],
+    },
+  ],
+  defaults: {
+    title: "On this page",
+    entries: [
+      { label: "Welcome bonus", anchor: "bonuses" },
+      { label: "How it works", anchor: "how-it-works" },
+      { label: "Frequently asked questions", anchor: "faq" },
+    ],
+  },
+  schema: z.looseObject({
+    title: z.string().catch("On this page"),
+    entries: z
+      .array(
+        z.looseObject({
+          label: z.string().catch(""),
+          anchor: z.string().catch(""),
+        }),
+      )
+      .catch([]),
+  }),
+  render: ({ title, entries, appearance }) => (
+    <Section appearance={appearance} as="nav">
+      <div className={cn("rounded-site-md border p-5", SITE_CARD)}>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-site-accent">{title}</p>
+        <ol className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {entries.map((entry, index) => {
+            const cleanAnchor = entry.anchor.replace(/^#+/, "").trim();
+            return (
+              <li key={index}>
+                <a
+                  href={cleanAnchor ? `#${cleanAnchor}` : "#"}
+                  className="inline-flex items-center gap-2 text-sm text-site-muted transition hover:text-site-text"
+                >
+                  <span className="font-mono text-xs text-site-accent">{index + 1}.</span>
+                  <span>{entry.label}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </Section>
+  ),
+};
+
+export const embed: BlockDefinition<{
+  title: string;
+  url: string;
+  aspect: "16:9" | "4:3" | "tall";
+  caption: string;
+}> = {
+  alias: "embed",
+  name: "Iframe embed",
+  group: "utility",
+  wave: 2,
+  adminOnly: true,
+  description: "Administrator-only HTTPS iframe embed with strict sandbox isolation.",
+  summary: "Admin-only HTTPS iframe",
+  fields: [
+    { key: "title", label: "Frame title (screen readers)", type: "text", default: "Embedded interactive widget" },
+    { key: "url", label: "HTTPS URL", type: "text", placeholder: "https://example.com/widget", default: "" },
+    {
+      key: "aspect",
+      label: "Frame proportion",
+      type: "select",
+      options: [
+        { label: "16:9 widescreen", value: "16:9" },
+        { label: "4:3 standard", value: "4:3" },
+        { label: "Tall (520px)", value: "tall" },
+      ],
+      default: "16:9",
+    },
+    { key: "caption", label: "Caption", type: "text", default: "" },
+  ],
+  defaults: {
+    title: "Embedded interactive widget",
+    url: "",
+    aspect: "16:9",
+    caption: "",
+  },
+  schema: z.looseObject({
+    title: z.string().catch("Embedded interactive widget"),
+    url: z.string().catch(""),
+    aspect: z.enum(["16:9", "4:3", "tall"]).catch("16:9"),
+    caption: z.string().catch(""),
+  }),
+  render: ({ title, url, aspect, caption, appearance }) => {
+    const trimmed = (url || "").trim();
+    const validHttps = /^https:\/\/[^\s<>"]+$/i.test(trimmed);
+    const frameSize = {
+      "16:9": "aspect-video",
+      "4:3": "aspect-[4/3]",
+      tall: "h-[520px]",
+    }[aspect];
     return (
       <Section appearance={appearance}>
-        <SectionHeading eyebrow={eyebrow} title={title} />
-        <div className={`grid gap-3 ${grid}`}>
-          {images.map((item, index) => (
-            <figure key={index} className="overflow-hidden rounded-[var(--site-radius-md)] border card-surface">
-              <div className="aspect-[4/3] overflow-hidden">
-                <MediaImage value={item.image} alt={item.caption} rounded={false} className="h-full w-full object-cover" fallbackLabel={`Image ${index + 1}`} />
+        <figure className="w-full">
+          <div className={cn("overflow-hidden rounded-site-lg border border-site-border", frameSize)}>
+            {validHttps ? (
+              <iframe
+                src={trimmed}
+                title={title || "Embedded interactive widget"}
+                sandbox="allow-scripts"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                className="h-full w-full border-0"
+              />
+            ) : (
+              <div className={cn(SITE_MEDIA_PLACEHOLDER, "h-full")}>
+                Enter a valid HTTPS embed URL
               </div>
-              {item.caption ? (
-                <figcaption className="px-3 py-2 text-[11px] text-[color:var(--site-muted)]">{item.caption}</figcaption>
-              ) : null}
-            </figure>
-          ))}
-        </div>
+            )}
+          </div>
+          {caption ? <figcaption className="mt-2 text-center text-xs text-site-muted">{caption}</figcaption> : null}
+        </figure>
       </Section>
     );
   },
 };
 
-export const scheduleTable: BlockDefinition<{
-  title: string;
-  description: string;
-  rows: { time: string; event: string; channel: string; note: string }[];
-  note: string;
-}> = {
-  alias: "schedule-table",
-  name: "Schedule",
-  group: "content",
-  description: "A simple timetable — tournament slots, stream times or support hours.",
-  summary: "Timetable rows",
-  wave: 2,
-  fields: [
-    { key: "title", label: "Heading", type: "text", default: "This week's tournaments" },
-    { key: "description", label: "Intro", type: "text", default: "All times CET. Trophies double during finals." },
-    {
-      key: "rows",
-      label: "Rows",
-      type: "repeater",
-      defaultItem: { time: "Mon 20:00", event: "Coin Blitz sprint", channel: "Slots", note: "" },
-      itemLabel: (item) => `${item.time ?? ""} ${item.event ?? ""}`.trim(),
-      min: 1,
-      max: 12,
-      fields: [
-        { key: "time", label: "When", type: "text", default: "Mon 20:00" },
-        { key: "event", label: "Event", type: "text", default: "Coin Blitz sprint" },
-        { key: "channel", label: "Channel", type: "text", default: "Slots" },
-        { key: "note", label: "Note", type: "text", default: "" },
-      ],
-    },
-    { key: "note", label: "Fine print", type: "text", default: "Schedule subject to change. Check the lobby for the live list." },
-  ],
-  defaults: {
-    title: "This week's tournaments",
-    description: "All times CET. Trophies double during finals.",
-    rows: [
-      { time: "Mon 20:00", event: "Coin Blitz sprint", channel: "Slots", note: "1,000 trophies" },
-      { time: "Wed 21:00", event: "Trophy Trail final", channel: "Slots", note: "5,000 trophies" },
-      { time: "Sat 19:00", event: "Golden Gates freeroll", channel: "Live", note: "Free entry" },
-    ],
-    note: "Schedule subject to change. Check the lobby for the live list.",
-  },
-  schema: z.looseObject({
-    title: z.string().catch(""),
-    description: z.string().catch(""),
-    rows: z
-      .array(z.looseObject({ time: z.string().catch(""), event: z.string(), channel: z.string().catch(""), note: z.string().catch("") }))
-      .catch([]),
-    note: z.string().catch(""),
-  }),
-  render: ({ title, description, rows, note, appearance }) => (
-    <Section appearance={appearance}>
-      <SectionHeading title={title} description={description} />
-      <div className="overflow-x-auto rounded-[var(--site-radius-md)] border card-surface">
-        <table className="w-full min-w-[520px] text-left text-sm">
-          <thead>
-            <tr className="border-b border-[color:var(--site-border)] text-[11px] uppercase tracking-wider text-[color:var(--site-muted)]">
-              <th className="px-4 py-2.5 font-semibold">When</th>
-              <th className="px-4 py-2.5 font-semibold">Event</th>
-              <th className="px-4 py-2.5 font-semibold">Channel</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={index} className="border-b border-[color:var(--site-border)] last:border-0">
-                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[12px] text-[color:var(--site-muted)]">{row.time}</td>
-                <td className="px-4 py-2.5 text-[13px] text-[color:var(--site-text)]">{row.event}</td>
-                <td className="px-4 py-2.5 text-[12px] text-[color:var(--site-muted)]">{row.channel}</td>
-                <td className="px-4 py-2.5 text-right text-[12px]" style={{ color: "var(--site-accent)" }}>
-                  {row.note}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {note ? <p className="mt-3 text-[11px] text-[color:var(--site-muted)]">{note}</p> : null}
-    </Section>
-  ),
-};
-
 export const extraBlocks = [
-  announcementBar,
   gameGrid,
   testimonialQuote,
-  jackpotCounter,
-  liveWinners,
-  vipTiers,
   responsibleGaming,
-  appDownload,
-  teamGrid,
-  timeline,
-  imageGallery,
-  scheduleTable,
+  rawHtml,
+  announcementBar,
+  animatedCounter,
+  payoutProofCard,
+  gallery,
+  logoStrip,
+  tabs,
+  tableOfContents,
+  embed,
 ] as unknown as BlockDefinition[];

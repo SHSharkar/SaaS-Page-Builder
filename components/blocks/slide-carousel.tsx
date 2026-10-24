@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MediaImage } from "@/lib/registry/shell";
+import {
+  SITE_CAROUSEL_ARROW,
+  SITE_MEDIA_PLACEHOLDER,
+  cn,
+  siteButton,
+} from "@/lib/theme-classes";
 
 export type Slide = {
   image: { id: string; url?: string; alt?: string } | null;
@@ -24,7 +30,7 @@ export function SlideCarousel({
 }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
-  const regionRef = useRef<HTMLDivElement>(null);
+  const [userStopped, setUserStopped] = useState(false);
   const count = slides.length;
 
   const go = useCallback(
@@ -36,16 +42,19 @@ export function SlideCarousel({
   );
 
   useEffect(() => {
-    if (!autoplay || paused || count < 2) return;
+    if (!autoplay || paused || userStopped || count < 2) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) return;
-    const id = window.setInterval(() => setIndex((i) => (i + 1) % count), Math.max(3, autoplaySeconds) * 1000);
+    const id = window.setInterval(
+      () => setIndex((i) => (i + 1) % count),
+      Math.max(3, autoplaySeconds) * 1000,
+    );
     return () => window.clearInterval(id);
-  }, [autoplay, autoplaySeconds, paused, count]);
+  }, [autoplay, autoplaySeconds, paused, userStopped, count]);
 
   if (count === 0) {
     return (
-      <div className="media-placeholder rounded-[var(--site-radius-md)] p-10 text-center">
+      <div className={cn(SITE_MEDIA_PLACEHOLDER, "rounded-site-md p-10")}>
         Add a slide to start the carousel.
       </div>
     );
@@ -66,45 +75,56 @@ export function SlideCarousel({
         if (event.key === "ArrowLeft") go(index - 1);
       }}
       tabIndex={0}
-      ref={regionRef}
     >
-      <div className="overflow-hidden rounded-[var(--site-radius-lg)] border" style={{ borderColor: "var(--site-border)" }}>
-        <div
-          className="flex transition-transform duration-500 ease-out"
-          style={{ transform: `translateX(-${index * 100}%)` }}
-        >
-          {slides.map((slide, i) => (
-            <div key={i} className="min-w-full" aria-hidden={i !== index} role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${count}`}>
-              <div className="relative">
-                {slide.image?.id ? (
-                  <MediaImage value={slide.image} alt={slide.title} rounded={false} className="h-64 w-full object-cover sm:h-80" />
-                ) : null}
-                <div
-                  className="absolute inset-0 flex items-end"
-                  style={{
-                    background: slide.image?.id
-                      ? "linear-gradient(180deg, transparent 30%, color-mix(in srgb, var(--site-bg) 92%, transparent))"
-                      : "color-mix(in srgb, var(--site-surface) 92%, var(--site-bg))",
-                  }}
-                >
-                  <div className="p-6 sm:p-8">
-                    <p className="font-heading text-2xl leading-tight">{slide.title}</p>
-                    {slide.text ? (
-                      <p className="mt-1 max-w-lg text-sm" style={{ color: "var(--site-muted)" }}>
-                        {slide.text}
-                      </p>
-                    ) : null}
-                    {slide.ctaLabel ? (
-                      <a href={slide.ctaHref || "#"} className="btn btn-solid mt-4 px-4 py-2 text-sm">
-                        {slide.ctaLabel}
-                      </a>
-                    ) : null}
-                  </div>
+      <div className="overflow-hidden rounded-site-lg border border-site-border bg-site-surface">
+        {slides.map((slide, i) => (
+          <div
+            key={i}
+            className={i === index ? "block" : "hidden"}
+            aria-hidden={i !== index}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${i + 1} of ${count}`}
+          >
+            <div className="relative min-h-64 sm:min-h-80">
+              {slide.image?.id ? (
+                <MediaImage
+                  value={slide.image}
+                  alt={slide.title}
+                  rounded={false}
+                  className="h-64 w-full object-cover sm:h-80"
+                />
+              ) : null}
+              <div
+                className={cn(
+                  "flex min-h-64 items-end p-6 sm:min-h-80 sm:p-8",
+                  slide.image?.id
+                    ? "absolute inset-0 bg-gradient-to-t from-site-bg via-site-bg/70 to-transparent"
+                    : "bg-site-surface",
+                )}
+              >
+                <div className="w-full">
+                  <p className="font-heading text-2xl leading-tight text-site-text">
+                    {slide.title}
+                  </p>
+                  {slide.text ? (
+                    <p className="mt-1.5 text-sm leading-relaxed text-site-muted">
+                      {slide.text}
+                    </p>
+                  ) : null}
+                  {slide.ctaLabel ? (
+                    <a
+                      href={slide.ctaHref || "#"}
+                      className={cn(siteButton({ variant: "solid", size: "sm" }), "mt-4")}
+                    >
+                      {slide.ctaLabel}
+                    </a>
+                  ) : null}
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
       {count > 1 ? (
         <>
@@ -112,7 +132,7 @@ export function SlideCarousel({
             type="button"
             onClick={() => go(index - 1)}
             aria-label="Previous slide"
-            className="carousel-arrow left-3"
+            className={cn(SITE_CAROUSEL_ARROW, "left-3 cursor-pointer")}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M15.4 3.6 7 12l8.4 8.4 1.4-1.4L9.8 12l7-7z" />
@@ -122,13 +142,13 @@ export function SlideCarousel({
             type="button"
             onClick={() => go(index + 1)}
             aria-label="Next slide"
-            className="carousel-arrow right-3"
+            className={cn(SITE_CAROUSEL_ARROW, "right-3 cursor-pointer")}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M8.6 3.6 17 12l-8.4 8.4-1.4-1.4 7-7-7-7z" />
             </svg>
           </button>
-          <div className="mt-3 flex items-center justify-center gap-1.5">
+          <div className="mt-3 flex items-center justify-center gap-2">
             {slides.map((_, i) => (
               <button
                 key={i}
@@ -136,13 +156,21 @@ export function SlideCarousel({
                 onClick={() => go(i)}
                 aria-label={`Go to slide ${i + 1}`}
                 aria-current={i === index}
-                className="h-1.5 rounded-full transition-all"
-                style={{
-                  width: i === index ? 22 : 8,
-                  background: i === index ? "var(--site-accent)" : "var(--site-border)",
-                }}
+                className={cn(
+                  "h-1.5 cursor-pointer rounded-full transition-all",
+                  i === index ? "w-6 bg-site-accent" : "w-2 bg-site-border",
+                )}
               />
             ))}
+            {autoplay ? (
+              <button
+                type="button"
+                onClick={() => setUserStopped((prev) => !prev)}
+                className="ml-2 cursor-pointer rounded border border-site-border px-2 py-0.5 text-[11px] font-medium text-site-muted hover:text-site-text"
+              >
+                {userStopped ? "Play" : "Pause"}
+              </button>
+            ) : null}
           </div>
         </>
       ) : null}

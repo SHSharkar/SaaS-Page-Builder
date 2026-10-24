@@ -2,9 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/lib/auth/session";
-import { consumeRateLimit } from "@/lib/cache";
-import { applyImportJob, createImportJob, discardImportJob, getImportJob } from "@/lib/importer";
-import type { ImportReviewDecision } from "@/lib/documents";
+import {
+  applyImportJob,
+  createImportJob,
+  discardImportJob,
+  getImportJob,
+  type SegmentDecisionInput,
+} from "@/lib/importer";
 
 export type ActionState = {
   ok: boolean;
@@ -12,37 +16,34 @@ export type ActionState = {
   message?: string;
   jobId?: string;
   pageId?: string;
-  copiedAssets?: number;
 };
 
 function failure(error: unknown): ActionState {
   return { ok: false, error: error instanceof Error ? error.message : String(error) };
 }
 
-const DAILY_IMPORTS = 20;
-
 export async function uploadImportAction(input: {
   siteId: string;
   filename: string;
   html: string;
+  fetchRemoteImages?: boolean;
 }): Promise<ActionState> {
   try {
     const actor = await requirePermission("import.create");
-    if (!consumeRateLimit(`import:${actor.user.id}`, DAILY_IMPORTS, 24 * 60 * 60)) {
-      throw new Error(`Import limit reached — ${DAILY_IMPORTS} imports per staff member per day.`);
-    }
-    if (!input.html.trim()) throw new Error("Paste the HTML or choose a file first.");
+    if (!input.html.trim()) throw new Error("Paste HTML markup or choose a file first.");
 
     const job = await createImportJob({
       siteId: input.siteId,
       filename: input.filename || "pasted.html",
-      bytes: Buffer.from(input.html, "utf8"),
+      html: input.html,
+      fetchRemoteImages: input.fetchRemoteImages,
       actor,
     });
     revalidatePath(`/admin/sites/${input.siteId}/imports`);
+    const total = (job.report?.mappedCount ?? 0) + (job.report?.unmappedCount ?? 0);
     return {
       ok: true,
-      message: `Mapped ${job.mappingResult?.counts.mapped ?? 0} of ${job.mappingResult?.counts.sections ?? 0} sections — review before applying.`,
+      message: `Mapped ${job.report?.mappedCount ?? 0} of ${total} sections. Review before applying.`,
       jobId: job.id,
     };
   } catch (error) {
@@ -55,13 +56,13 @@ export async function applyImportAction(input: {
   jobId: string;
   title: string;
   slug: string;
-  decisions: ImportReviewDecision[];
+  decisions: SegmentDecisionInput[];
 }): Promise<ActionState> {
   try {
-    const actor = await requirePermission("import.review");
+    const actor = await requirePermission("import.apply");
     const job = await getImportJob(input.siteId, input.jobId);
     if (!job) throw new Error("Import job not found.");
-    if (!input.decisions.some((decision) => decision.decision !== "removed")) {
+    if (!input.decisions.some((decision) => decision.decision !== "skip")) {
       throw new Error("Keep at least one section before applying the import.");
     }
 
@@ -69,8 +70,8 @@ export async function applyImportAction(input: {
       siteId: input.siteId,
       jobId: input.jobId,
       decisions: input.decisions,
-      title: input.title,
-      slug: input.slug,
+      pageTitle: input.title,
+      pageSlug: input.slug,
       actor,
     });
 
@@ -78,7 +79,7 @@ export async function applyImportAction(input: {
     revalidatePath(`/admin/sites/${input.siteId}/pages`);
     return {
       ok: true,
-      message: `Draft created${result.copiedAssets ? ` with ${result.copiedAssets} copied image${result.copiedAssets === 1 ? "" : "s"}` : ""}. It is not published.`,
+      message: `Draft created with ${result.blockCount} block${result.blockCount === 1 ? "" : "s"}. It stays unpublished until you publish it.`,
       pageId: result.pageId,
     };
   } catch (error) {
@@ -86,13 +87,18 @@ export async function applyImportAction(input: {
   }
 }
 
-export async function discardImportAction(input: { siteId: string; jobId: string }): Promise<ActionState> {
+export async function discardImportAction(input: {
+  siteId: string;
+  jobId: string;
+}): Promise<ActionState> {
   try {
-    const actor = await requirePermission("import.review");
+    const actor = await requirePermission("import.apply");
     await discardImportJob(input.siteId, input.jobId, actor);
     revalidatePath(`/admin/sites/${input.siteId}/imports`);
-    return { ok: true, message: "Import discarded" };
+    return { ok: true, message: "Import discarded." };
   } catch (error) {
     return failure(error);
   }
 }
+
+export const startImportAction = uploadImportAction;

@@ -26,11 +26,11 @@ export function PasskeySignInButton({ next }: { next?: string | null }) {
     <div className="space-y-2">
       <button
         type="button"
-        onClick={signIn}
+        onClick={() => void signIn()}
         disabled={busy}
-        className="w-full rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink-900 hover:bg-paper disabled:opacity-60"
+        className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-60"
       >
-        {busy ? "Waiting for your device…" : "Sign in with a passkey"}
+        {busy ? "Waiting for your device..." : "Sign in with a passkey"}
       </button>
       {error ? <p className="text-[11px] text-red-600">{error}</p> : null}
     </div>

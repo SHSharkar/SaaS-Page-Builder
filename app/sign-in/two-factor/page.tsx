@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
+import { getCurrentActor } from "@/lib/auth/session";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { TwoFactorForm } from "@/components/auth/two-factor-form";
-import { getActor } from "@/lib/auth/session";
 
-export const metadata = { title: "Two-factor check" };
 export const dynamic = "force-dynamic";
 
 export default async function TwoFactorPage({
@@ -11,18 +10,17 @@ export default async function TwoFactorPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
+  const actor = await getCurrentActor();
   const { next } = await searchParams;
-  const target = next?.startsWith("/") && !next.startsWith("//") ? next : null;
-  const actor = await getActor();
-  if (actor) redirect(target ?? "/admin");
+  if (actor) redirect(next && next.startsWith("/") ? next : "/admin");
 
   return (
     <AuthShell
-      eyebrow="Second factor"
-      title="One more check"
-      description="Enter the six-digit code from your authenticator app to finish signing in."
+      eyebrow="Two-factor check"
+      title="Enter your 6-digit code"
+      description="Open your authenticator app or use one of your single-use recovery codes."
     >
-      <TwoFactorForm next={target} />
+      <TwoFactorForm next={next ?? null} />
     </AuthShell>
   );
 }

@@ -1,21 +1,18 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
-import { domains, users } from "@/lib/db/schema";
+import { domains } from "@/lib/db/schema";
 import { createSite, resolveHost } from "@/lib/sites";
 import {
   archivePage,
   createPage,
+  newPageDocument,
   publishPage,
   saveDraft,
   unpublishPage,
-  newPageDocument,
-  updatePageMeta,
 } from "@/lib/pages";
 import { loadPreviewPage, loadPublicPage } from "@/lib/public-page";
 import { buildMetadata } from "@/lib/render";
 import { DEFAULT_SEO, DEFAULT_THEME } from "@/lib/documents";
-import { cacheKeys, invalidatePageCache } from "@/lib/cache";
 import type { Actor } from "@/lib/auth/session";
 import { adminActor } from "./support/actor";
 
@@ -27,14 +24,23 @@ let siteId: string;
 function doc(text: string) {
   return {
     ...newPageDocument(),
-    content: [{ type: "hero", props: { id: `hero-${Math.random().toString(36).slice(2)}`, title: text } }],
+    content: [
+      {
+        type: "hero",
+        props: { id: `hero-${Math.random().toString(36).slice(2)}`, headline: text },
+      },
+    ],
   };
 }
 
 beforeAll(async () => {
   await ensureDb();
   actor = await adminActor();
-  const site = await createSite({ name: "Render Test", slug: `render-test-${Date.now()}`, createdBy: actor.user.id });
+  const site = await createSite({
+    name: "Render Test",
+    slug: `render-test-${Date.now()}`,
+    createdBy: actor.user.id,
+  });
   siteId = site.id;
   await db.insert(domains).values({
     siteId,
@@ -68,7 +74,6 @@ describe("hostname resolution", () => {
   });
 
   it("falls back to the first active site in the preview environment", async () => {
-
     const resolution = await resolveHost("nobody.example");
     expect(resolution?.domain).toBeNull();
     expect(resolution?.site).toBeTruthy();
@@ -92,7 +97,7 @@ describe("public rendering", () => {
 
     const loaded = await loadPublicPage(HOST, "/public");
     expect(loaded.kind).toBe("page");
-    if (loaded.kind === "page") expect(loaded.rendered.page.slug).toBe("public");
+    if (loaded.kind === "page") expect(loaded.rendered.page.slug).toBe("/public");
   });
 
   it("returns the same not-found shape for a missing page", async () => {
@@ -133,14 +138,14 @@ describe("public rendering", () => {
   it("serves the new snapshot immediately after a republish", async () => {
     const page = await createPage({ siteId, title: "Republish", slug: "republish", actor });
     const first = await saveDraft(siteId, page.id, doc("First"), page.lockVersion, actor);
-    const versionOne = await publishPage(siteId, page.id, actor);
+    const { version: versionOne } = await publishPage(siteId, page.id, actor);
     const before = await loadPublicPage(HOST, "/republish");
-    expect(before.kind === "page" && before.rendered.versionId).toBe(versionOne.versionId);
+    expect(before.kind === "page" && before.rendered.versionId).toBe(versionOne.id);
 
     await saveDraft(siteId, page.id, doc("Second"), first.lockVersion, actor);
-    const versionTwo = await publishPage(siteId, page.id, actor);
+    const { version: versionTwo } = await publishPage(siteId, page.id, actor);
     const after = await loadPublicPage(HOST, "/republish");
-    expect(after.kind === "page" && after.rendered.versionId).toBe(versionTwo.versionId);
+    expect(after.kind === "page" && after.rendered.versionId).toBe(versionTwo.id);
   });
 
   it("hides an archived page", async () => {
@@ -164,8 +169,10 @@ describe("previews", () => {
     }
   });
 
-  it("cannot be reached without a site id", async () => {
-    expect((await loadPreviewPage("00000000-0000-0000-0000-000000000000", "/preview-me")).kind).toBe("not_found");
+  it("cannot be reached without a valid site id", async () => {
+    expect(
+      (await loadPreviewPage("00000000-0000-0000-0000-000000000000", "/preview-me")).kind,
+    ).toBe("not_found");
   });
 });
 
@@ -180,20 +187,31 @@ describe("metadata", () => {
 
   it("falls back to page title plus site name", () => {
     const meta = buildMetadata({ ...base, title: "Bonuses" });
-    expect(meta.title.absolute).toBe("Bonuses · Trofeo");
+    expect(meta.title.absolute).toBe("Bonuses | Trofeo");
   });
 
   it("lets a page override the title outright", () => {
-    const meta = buildMetadata({ ...base, title: "Bonuses", seo: { ...DEFAULT_SEO, title: "100% up to €500" } });
-    expect(meta.title.absolute).toBe("100% up to €500");
+    const meta = buildMetadata({
+      ...base,
+      title: "Bonuses",
+      seo: { ...DEFAULT_SEO, title: "100% up to USD 500" },
+    });
+    expect(meta.title.absolute).toBe("100% up to USD 500");
   });
 
   it("marks staff previews noindex", () => {
-    expect(buildMetadata({ ...base, title: "X", noindex: true }).robots).toEqual({ index: false, follow: false });
+    expect(buildMetadata({ ...base, title: "X", noindex: true }).robots).toEqual({
+      index: false,
+      follow: false,
+    });
   });
 
   it("drops the canonical link when the page opts out", () => {
-    const meta = buildMetadata({ ...base, title: "X", seo: { ...DEFAULT_SEO, canonicalMode: "none" } });
+    const meta = buildMetadata({
+      ...base,
+      title: "X",
+      seo: { ...DEFAULT_SEO, canonicalMode: "none" },
+    });
     expect(meta.alternates?.canonical).toBeUndefined();
   });
 

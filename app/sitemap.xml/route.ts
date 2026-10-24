@@ -1,39 +1,45 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { db, ensureDb } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
-import { resolveHost } from "@/lib/sites";
+import { NextResponse } from "next/server";
+import { listPublishedSlugsForSite, resolveSiteForHost } from "@/lib/public-page";
+import { primaryHostname } from "@/lib/domains";
 
 export const dynamic = "force-dynamic";
 
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ?? url.host;
-  const resolution = await resolveHost(host);
-  if (!resolution || !resolution.canServe) {
-    return new Response("Not found", { status: 404 });
+  const host = request.headers.get("host");
+  const site = await resolveSiteForHost(host);
+  if (!site) {
+    return new NextResponse("Not found", { status: 404 });
   }
+  const primary = (await primaryHostname(site.id)) ?? host ?? site.slug;
+  const origin =
+    primary.includes("localhost") || primary.includes(":")
+      ? `http://${primary}`
+      : `https://${primary}`;
 
-  await ensureDb();
-  const rows = await db
-    .select({ slug: pages.slug, updatedAt: pages.updatedAt, seo: pages.seo })
-    .from(pages)
-    .where(and(eq(pages.siteId, resolution.site.id), eq(pages.status, "published"), isNull(pages.deletedAt)))
-    .orderBy(asc(pages.slug));
-
-  const entries = rows
-    .filter((row) => !row.seo?.noindex)
-    .map((row) => {
-      const loc = `https://${host}/${row.slug}`.replace(/\/$/, "") || `https://${host}`;
-      return `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${new Date(row.updatedAt).toISOString()}</lastmod>\n  </url>`;
+  const pages = await listPublishedSlugsForSite(site.id);
+  const urls = pages
+    .map((page) => {
+      const loc = page.slug ? `${origin}/${page.slug}` : origin;
+      const lastmod = page.updatedAt.toISOString();
+      return `  <url><loc>${xmlEscape(loc)}</loc><lastmod>${lastmod}</lastmod></url>`;
     })
     .join("\n");
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
 
-  return new Response(xml, {
+  return new NextResponse(xml, {
+    status: 200,
     headers: {
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "public, max-age=300",
+      "content-type": "application/xml; charset=utf-8",
+      "cache-control": "public, max-age=300",
     },
   });
 }

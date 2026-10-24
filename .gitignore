@@ -5,6 +5,7 @@ build/
 dist/
 coverage/
 data/
+storage/
 .cache/
 *.tsbuildinfo
 next-env.d.ts
