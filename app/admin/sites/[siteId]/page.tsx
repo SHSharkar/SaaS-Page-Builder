@@ -4,14 +4,14 @@ import { getSite, listSiteDomains, siteCounts, platformHost } from "@/lib/sites"
 import { listPages } from "@/lib/pages";
 import { listSiteContents, GLOBAL_LABELS, type GlobalKind } from "@/lib/globals";
 import { listAudit } from "@/lib/audit";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { Panel, Stat, StatusBadge, relativeTime } from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function SiteOverviewPage({ params }: { params: Promise<{ siteId: string }> }) {
   const { siteId } = await params;
-  await requireActor();
+  await requireView("site.view");
   const site = await getSite(siteId);
   if (!site) notFound();
 

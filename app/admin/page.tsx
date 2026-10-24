@@ -2,20 +2,26 @@ import Link from "next/link";
 import { platformOverview } from "@/lib/overview";
 import { listSites, platformHost } from "@/lib/sites";
 import { listAudit } from "@/lib/audit";
-import { requireActor } from "@/lib/auth/session";
+import { primaryRole } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel, Stat, StatusBadge, relativeTime } from "@/components/admin/ui";
 import { REGISTRY_STATS } from "@/lib/registry";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const actor = await requireActor();
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ denied?: string }>;
+}) {
+  const { denied } = await searchParams;
+  const actor = await requireView("site.view");
   const [overview, sites, activity] = await Promise.all([platformOverview(), listSites(), listAudit({ limit: 8 })]);
 
   return (
     <div>
       <PageHeader
-        eyebrow={`Signed in as ${actor.user.role}`}
+        eyebrow={`Signed in as ${primaryRole(actor)?.name ?? "staff"}`}
         title={`Good to see you, ${actor.user.name.split(" ")[0]}`}
         description="Everything the team has shipped, everything waiting on a decision. Publishing is always one click away."
         actions={
@@ -31,6 +37,13 @@ export default async function DashboardPage() {
           </>
         }
       />
+
+      {denied ? (
+        <p className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-900">
+          That screen needs the <strong>{denied}</strong> permission, which your roles do not include. An admin can
+          grant it on <Link href="/admin/roles" className="underline">Roles &amp; permissions</Link>.
+        </p>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Sites" value={overview.sites} hint={`${overview.domains} domains connected`} href="/admin/sites" />

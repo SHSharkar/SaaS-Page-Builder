@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireActor } from "@/lib/auth/session";
+import { requireActor, primaryRole } from "@/lib/auth/session";
 import { listSites } from "@/lib/sites";
 import { signOutAction } from "@/lib/actions/auth";
 import { MobileNav, SidebarNav, type NavItem } from "@/components/admin/nav";
@@ -12,6 +12,7 @@ const NAV: NavItem[] = [
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/components", label: "Component library" },
   { href: "/admin/team", label: "Team" },
+  { href: "/admin/roles", label: "Roles & permissions" },
   { href: "/admin/audit", label: "Audit log" },
   { href: "/admin/settings", label: "Platform settings" },
 ];
@@ -68,13 +69,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <p className="truncate text-[10px] text-white/40">{actor.user.email}</p>
           <div className="mt-2 flex items-center justify-between">
             <span className="rounded-full bg-gold-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-300">
-              {actor.user.role}
+              {primaryRole(actor)?.name ?? "No role"}
             </span>
-            <form action={signOutAction}>
-              <button type="submit" className="text-[10px] text-white/50 underline hover:text-white">
-                Sign out
-              </button>
-            </form>
+            <span className="flex items-center gap-2">
+              <Link href="/account/password" className="text-[10px] text-white/50 underline hover:text-white">
+                Account
+              </Link>
+              <form action={signOutAction}>
+                <button type="submit" className="text-[10px] text-white/50 underline hover:text-white">
+                  Sign out
+                </button>
+              </form>
+            </span>
           </div>
         </div>
       </aside>

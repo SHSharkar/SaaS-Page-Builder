@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { createSiteAction } from "@/lib/actions/sites";
-import { requireRole } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { PageHeader, Panel, Field } from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewSitePage() {
-  await requireRole("admin");
+  await requirePermission("site.create");
 
   return (
     <div className="max-w-3xl">

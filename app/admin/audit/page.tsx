@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { listAudit } from "@/lib/audit";
 import { listSites } from "@/lib/sites";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel, relativeTime } from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export default async function AuditPage({
 }: {
   searchParams: Promise<{ site?: string; limit?: string }>;
 }) {
-  await requireActor();
+  await requireView("audit.view");
   const { site = "", limit = "100" } = await searchParams;
   const [sites, entries] = await Promise.all([
     listSites(),

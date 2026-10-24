@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { listTemplates, placeholdersFor } from "@/lib/templates";
 import { listSites } from "@/lib/sites";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
 import { TemplateCard } from "@/components/admin/template-card";
 
 export const dynamic = "force-dynamic";
 
 export default async function TemplatesPage() {
-  const actor = await requireActor();
+  const actor = await requireView("template.view");
   const [templates, sites] = await Promise.all([
     listTemplates({ includeStaff: true, userId: actor.user.id }),
     listSites(),

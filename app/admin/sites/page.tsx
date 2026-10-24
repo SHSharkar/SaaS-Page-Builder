@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { listSites, platformHost } from "@/lib/sites";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { siteCounts } from "@/lib/sites";
 import { PageHeader, Panel, StatusBadge, EmptyState, relativeTime } from "@/components/admin/ui";
 import { listDeletedSites } from "@/lib/sites";
@@ -9,7 +9,7 @@ import { DeletedSites } from "@/components/admin/deleted-sites";
 export const dynamic = "force-dynamic";
 
 export default async function SitesPage() {
-  await requireActor();
+  await requireView("site.view");
   const sites = await listSites();
   const counts = await Promise.all(sites.map((row) => siteCounts(row.site.id)));
   const deleted = await listDeletedSites();

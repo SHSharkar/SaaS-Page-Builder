@@ -26,7 +26,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
   return (
     <AuthShell
       eyebrow="You are invited"
-      title={`Join as ${invite.role}`}
+      title={`Join as ${invite.roleName}`}
       description={`Set up your account for ${invite.email}. The link works once and expires ${invite.expiresAt.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}.`}
     >
       <AcceptInviteForm token={token} email={invite.email} />

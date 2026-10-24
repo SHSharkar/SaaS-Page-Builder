@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSite } from "@/lib/sites";
 import { listImportJobs } from "@/lib/importer";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel, StatusBadge, relativeTime, EmptyState } from "@/components/admin/ui";
 import { ImportUpload } from "@/components/admin/import-upload";
 
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SiteImportsPage({ params }: { params: Promise<{ siteId: string }> }) {
   const { siteId } = await params;
-  await requireActor();
+  await requireView("import.view");
   const site = await getSite(siteId);
   if (!site) notFound();
   const jobs = await listImportJobs(siteId);

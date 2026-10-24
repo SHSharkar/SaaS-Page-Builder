@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getSite, listSiteDomains, platformHost } from "@/lib/sites";
 import { verificationRecord } from "@/lib/domains";
-import { requireActor, can } from "@/lib/auth/session";
+import { requireView, can } from "@/lib/auth/session";
 import { PageHeader, Panel } from "@/components/admin/ui";
 import { DomainsPanel } from "@/components/admin/domains-panel";
 
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SiteDomainsPage({ params }: { params: Promise<{ siteId: string }> }) {
   const { siteId } = await params;
-  const actor = await requireActor();
+  const actor = await requireView("domain.view");
   const site = await getSite(siteId);
   if (!site) notFound();
   const domains = await listSiteDomains(siteId);

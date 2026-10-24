@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getSite } from "@/lib/sites";
 import { listMedia, MAX_IMAGE_BYTES } from "@/lib/media";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel } from "@/components/admin/ui";
 import { MediaLibrary } from "@/components/admin/media-library";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SiteMediaPage({ params }: { params: Promise<{ siteId: string }> }) {
   const { siteId } = await params;
-  await requireActor();
+  await requireView("media.view");
   const site = await getSite(siteId);
   if (!site) notFound();
   const assets = await listMedia(siteId);

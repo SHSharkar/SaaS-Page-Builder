@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSite } from "@/lib/sites";
 import { listSiteContents, GLOBAL_LABELS, type GlobalKind } from "@/lib/globals";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel, StatusBadge, relativeTime } from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ const DESCRIPTIONS: Record<GlobalKind, string> = {
 
 export default async function SiteGlobalsPage({ params }: { params: Promise<{ siteId: string }> }) {
   const { siteId } = await params;
-  await requireActor();
+  await requireView("globals.view");
   const site = await getSite(siteId);
   if (!site) notFound();
   const contents = await listSiteContents(siteId);

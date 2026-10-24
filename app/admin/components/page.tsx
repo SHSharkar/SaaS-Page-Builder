@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { GROUPS, searchCatalog, REGISTRY_STATS, defaultPropsFor } from "@/lib/registry";
-import { requireActor } from "@/lib/auth/session";
+import { requireView } from "@/lib/auth/session";
 import { PageHeader, Panel } from "@/components/admin/ui";
 import { DEFAULT_THEME } from "@/lib/documents";
 import { themeStyle } from "@/lib/render";
@@ -16,7 +16,7 @@ export default async function ComponentsPage({
 }: {
   searchParams: Promise<{ q?: string; group?: string }>;
 }) {
-  await requireActor();
+  await requireView("catalog.view");
   const { q = "", group = "all" } = await searchParams;
   const blocks = searchCatalog(q, { includeDeprecated: true }).filter(
     (block) => group === "all" || block.group === group,

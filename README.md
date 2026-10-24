@@ -23,7 +23,8 @@ migrated and seeded automatically on first boot:
 - `npm run db:migrate` — apply the shipped migrations, then seed a fresh database
 - `npm run seed` — seed demo content (idempotent; existing data is never overwritten)
 - `npm run typecheck` — `tsc --noEmit`
-- `npm test` — the vitest suite (state machines, publishing, media, retention, rendering, catalog)
+- `npm test` — the vitest suite (state machines, publishing, media, retention, rendering, catalog,
+  access control)
 - `npx tsx scripts/smoke.ts` — exercise the data layer end to end against a throwaway database
 
 Environment variables (all optional in development):
@@ -38,6 +39,8 @@ Environment variables (all optional in development):
 | `R2_BUCKET` | — | Bucket name for site media. |
 | `R2_PUBLIC_BASE_URL` | — | Public bucket domain used to build asset URLs. |
 | `PLATFORM_DOMAIN` | `pages.trofeo.test` | Suffix for generated platform subdomains. |
+| `BETTER_AUTH_URL` | `http://localhost:3000` | Public origin Better Auth signs cookies for. The sandbox preview hosts are trusted as well. |
+| `BETTER_AUTH_SECRET` | dev default | Signing secret for sessions. Set a long random value in production. |
 | `ALLOW_HOST_FALLBACK` | `true` | Serve the first active site when a host is unknown (preview environments). Set `false` in production so an unknown host 404s. |
 | `PGLITE_AUTO_RECOVER` | `true` | If an embedded database directory is unreadable after an unclean shutdown, move it aside and rebuild from the migrations + seed. Set `false` to make the failure fatal instead. |
 
@@ -108,10 +111,35 @@ drop it.
 from any page. Tokens written as `{{token}}` become fill-in fields at creation time; applying a
 template copies the document, so later edits never change the template.
 
-**Operations.** Invite-only staff accounts with roles (admin/editor/viewer) enforced server-side,
-optional TOTP two-factor, single-use invitations, a step-up check for sensitive acts, an append-only
-audit log, a database-backed job queue with dedupe keys and exponential backoff, scheduled publish
-and unpublish, and a platform settings screen (database > environment > default).
+**Identity.** Authentication is [Better Auth](https://better-auth.com) 1.7 behind
+`/api/auth/[...all]`: it owns `user`, `account` (the password is a credential row), `session`,
+`verification` and `two_factor`. The password hasher is our scrypt pair, so an existing database keeps
+its users through the migration. Public sign-up is disabled (`disableSignUp`), so accounts exist only
+because an admin created one or an invitation was accepted.
+
+**Authorization.** Roles are rows, permissions are rows, and the join tables are the only source of
+truth — nothing compares a role *name* to a string. `lib/auth/permissions.ts` defines the 40-key
+catalogue (what a capability *means*, grouped and flagged when dangerous);
+`lib/auth/rbac.ts` owns the tables, `syncRbacCatalog()` keeps the catalogue in lockstep on boot, and
+every server action calls `requirePermission(key)`, which is deny-by-default and treats an unknown key
+as a programmer error. `/admin/roles` is a live matrix editor: create a role, tick capabilities,
+assign it on `/admin/team`, and the next request respects it (permissions are re-read per request, not
+cached in the cookie). The Administrator role always holds the whole catalogue; Editor and Viewer are
+seeded once and can then be narrowed without the next boot undoing it.
+
+Sensitive acts (role changes, suspensions, domains, deletions) require *step-up*: `requireStepUp`
+answers 428 until the session refreshes its confirmation, which `/account` and the team screen do
+inline with the current password for a ten-minute window. Sessions are listed on `/account` and
+revocable per device; suspending an account ends its sessions immediately. `server.ts` also enforces
+`stepUpUntil` from the database, so a stale cookie cannot claim freshness.
+
+**Operations.** Invite-only staff accounts, single-use invitations with a role attached (seven-day
+expiry, enforced on read as well as by the sweeper), admin-created accounts that must change their
+first password, single-use password-reset links stored as hashes in `verification`, optional TOTP
+two-factor, an append-only audit log, a database-backed job queue with dedupe keys and exponential
+backoff, scheduled publish and unpublish, and a platform settings screen (database > environment >
+default). The last active admin cannot be demoted or suspended: rank is checked before the write, and
+the refusal names the reason.
 
 **Lifecycles and retention.** Every status change goes through the state machines in
 `lib/lifecycle.ts` (`assertTransition`); an illegal move is a typed 409, not a silent write. The
@@ -183,10 +211,14 @@ inventing its own.
 • site restore/purge   soft delete → restore → purge only when deleted
 ```
 
-`npm test` covers the same promises at unit level (96 checks): every legal and illegal transition in
+`npm test` covers the same promises at unit level (111 checks): every legal and illegal transition in
 all eight machines, `lock_version` refusals, one-homepage enforcement, snapshot immutability and
 pruning, media verification and dedupe, hostname resolution and the identical 404, metadata assembly,
-and a catalog pass that renders all 35 components from their defaults.
+and a catalog pass that renders all 35 components from their defaults. `tests/auth.test.ts` adds the
+access layer: the catalogue is complete and unique, deny-by-default refusals carry 403, unknown
+permission keys are errors, step-up gaps carry 428, role assignment is replaced atomically and records
+its author, the last-admin count is real, custom roles are created/narrowed/deleted, and a narrowed
+Editor role survives a catalogue sync.
 
 The public routes, sitemap, robots, media route and every admin screen were also fetched over HTTP
 and checked for expected markup and status codes.
@@ -198,7 +230,12 @@ app/
   [[...path]]/page.tsx            public renderer (host → site → page → snapshot)
   preview/[siteId]/[[...path]]    staff-only, noindex draft preview
   admin/…                         dashboard, sites, pages, globals, media, domains,
-                                  imports, settings, templates, components, team, audit
+                                  imports, settings, templates, components, team,
+                                  roles (permission matrix), audit
+  account/password                own password, forced first change, own sessions
+  reset/[token]                   single-use password reset
+  api/auth/[...all]               Better Auth endpoints (sign-in, sign-out, 2FA, session)
+  api/sites/[siteId]/media        upload (local backend), presign and confirm endpoints
   edit/[siteId]/…                 Puck editor for pages and for global content
   media/[file]/route.ts           immutable, hashed media bytes
   sitemap.xml, robots.txt         per-host
@@ -207,6 +244,7 @@ lib/
   registry/                       component definitions (the single source of truth)
   lifecycle.ts retention.ts       state machines, keep windows, the daily sweeper
   pages.ts globals.ts media.ts domains.ts templates.ts importer.ts
+  auth/                           Better Auth instance, RBAC tables, session guards, tokens
   media/storage.ts                local | R2 behind one contract
   render.tsx public-page.ts       public tree and metadata
   cache.ts queue.ts audit.ts      Valkey-shaped cache, job queue, audit trail
@@ -248,7 +286,14 @@ tests/                            vitest suites (lifecycle, pages, media, retent
 - **Host fallback on** for preview environments: an unrecognised host serves the first active site
   so the preview is usable. Set `ALLOW_HOST_FALLBACK=false` to get strict 404s.
 - **Invitations are shown once** as a copyable link; there is no mail transport in this build. The
-  accept screen, expiry and single-use rules are real.
+  accept screen, expiry and single-use rules are real. Password resets work the same way: the admin
+  gets a one-hour, single-use link to hand over.
+- **Better Auth owns identity, the app owns authorization.** Keeping roles out of the auth library
+  means a role can be reshaped at run time without a deploy, and an identity provider could be added
+  later without touching a single guard.
+- **Permissions are re-read on every request** (`getActor` → `rolesForUser` + `permissionKeysForUser`)
+  and the session cookie carries no authorization claim, so revoking a role takes effect on the next
+  click instead of the next sign-in.
 
 ## Out of scope (v1, per the documents)
 

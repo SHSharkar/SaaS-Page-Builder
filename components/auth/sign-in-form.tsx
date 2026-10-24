@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { signInAction, type FormState } from "@/lib/actions/auth";
 
 const initial: FormState = {};
@@ -12,7 +13,16 @@ export function SignInForm({
   demo: { email: string; password: string }[];
   next?: string | null;
 }) {
+  const router = useRouter();
   const [state, action, pending] = useActionState(signInAction, initial);
+
+  // The password was right but a TOTP code is still owed: Better Auth keeps the
+  // half-signed-in session in a cookie and the code screen finishes it.
+  useEffect(() => {
+    if (state.twoFactor) {
+      router.push(`/sign-in/two-factor${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+    }
+  }, [state.twoFactor, next, router]);
 
   return (
     <form action={action} className="space-y-4">

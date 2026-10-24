@@ -1,7 +1,8 @@
 import { desc } from "drizzle-orm";
 import { db, ensureDb } from "@/lib/db";
 import { platformSettings } from "@/lib/db/schema";
-import { requireActor, can, countActiveAdmins } from "@/lib/auth/session";
+import { requireView, can } from "@/lib/auth/session";
+import { countActiveStaffAtRank } from "@/lib/auth/rbac";
 import { listRecentJobs } from "@/lib/queue";
 import { cleanupPreview } from "@/lib/retention";
 import { KEEP } from "@/lib/lifecycle";
@@ -12,11 +13,13 @@ import { PlatformSettings } from "@/components/admin/platform-settings";
 export const dynamic = "force-dynamic";
 
 export default async function PlatformSettingsPage() {
-  const actor = await requireActor();
+  const actor = await requireView("settings.view");
   await ensureDb();
   const rows = await db.select().from(platformSettings).orderBy(desc(platformSettings.key));
   const jobs = await listRecentJobs(12);
-  const admins = await countActiveAdmins();
+  // "Active admins" means anyone still holding an admin-rank role, however the
+  // roles were renamed or extended.
+  const admins = await countActiveStaffAtRank(100);
   const preview = await cleanupPreview();
   const storage = storageInfo();
 
@@ -26,7 +29,11 @@ export default async function PlatformSettingsPage() {
         eyebrow="Platform"
         title="Settings"
         description="Runtime knobs, worker controls and the environment this instance is running in. Guarded by the admin role."
-        actions={<span className="badge badge-gray">{can(actor, "admin") ? "admin" : actor.user.role}</span>}
+        actions={
+          <span className="badge badge-gray">
+            {actor.roles.length ? actor.roles.map((role) => role.name).join(" · ") : "no role"}
+          </span>
+        }
       />
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
